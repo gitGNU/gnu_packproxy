@@ -12,7 +12,6 @@
 #include "http_headers.h"
 #include "log.h"
 #include "gzip.h"
-#include "deflate.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
@@ -306,9 +305,37 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
     }
 }
 
+static void
+encode_compressed_content (struct http_request *request, int min_percent, 
+			   int deflate_flag)
+{
+  char *encoding_type = deflate_flag ? "deflate" : "gzip";
+  struct evbuffer *compressed
+    = evbuffer_gzip (request->evhttp_request->input_buffer, min_percent, 
+		     deflate_flag);
+  if (compressed)
+    {
+      log ("compressed (%s): %d -> %d",
+	   encoding_type,
+	   EVBUFFER_LENGTH (request->evhttp_request->input_buffer),
+	   EVBUFFER_LENGTH (compressed));
+
+      evbuffer_drain (request->evhttp_request->input_buffer,
+		      EVBUFFER_LENGTH (request->evhttp_request
+				       ->input_buffer));
+      evbuffer_add_buffer (request->evhttp_request->input_buffer,
+			   compressed);
+      evbuffer_free (compressed);
+
+      evbuffer_add_printf (request->data, "Content-Encoding: %s\r\n", encoding_type);
+      log ("Adding: Content-Encoding: %s", encoding_type);
+    }
+}
+
 void
 http_request_processed_cb (struct http_request *request)
 {
+  int we_prefer_deflate = 1;
   /* NB: REQUEST->EVHTTP_REQUEST will disappear when we return.  We
      must copy any data that we would like to preserve.  */
 
@@ -376,49 +403,23 @@ http_request_processed_cb (struct http_request *request)
     {
       const char *accept_encoding
 	= http_headers_find (request->client_headers, "Accept-Encoding");
-      if (accept_encoding && strstr (accept_encoding, "deflate"))
-	/* The client (appears to) accepts compressed encodings.  */
+      if (accept_encoding)
 	{
-	  struct evbuffer *deflated
-	    = evbuffer_deflate (request->evhttp_request->input_buffer, 75);
-	  if (deflated)
+	  char *accept_deflate = strstr (accept_encoding, "deflate");
+	  char *accept_gzip = strstr (accept_encoding, "gzip");
+	  if (accept_deflate && accept_gzip)
 	    {
-	      log ("deflate: %d -> %d",
-		   EVBUFFER_LENGTH (request->evhttp_request->input_buffer),
-		   EVBUFFER_LENGTH (deflated));
-
-	      evbuffer_drain (request->evhttp_request->input_buffer,
-			      EVBUFFER_LENGTH (request->evhttp_request
-					       ->input_buffer));
-	      evbuffer_add_buffer (request->evhttp_request->input_buffer,
-				   deflated);
-	      evbuffer_free (deflated);
-
-	      evbuffer_add_printf (request->data, "Content-Encoding: deflate\r\n");
-	      log ("Adding: Content-Encoding: deflate");
+	      if (we_prefer_deflate)
+		encode_compressed_content (request, 75, 1);
+	      else
+		encode_compressed_content (request, 75, 0);
 	    }
-	}
-      else if (accept_encoding && strstr (accept_encoding, "gzip"))
-	/* The client (appears to) accepts gzip encodings.  */
-	{
-	  struct evbuffer *gzipped
-	    = evbuffer_gzip (request->evhttp_request->input_buffer, 75);
-	  if (gzipped)
-	    {
-	      log ("gzipped: %d -> %d",
-		   EVBUFFER_LENGTH (request->evhttp_request->input_buffer),
-		   EVBUFFER_LENGTH (gzipped));
-
-	      evbuffer_drain (request->evhttp_request->input_buffer,
-			      EVBUFFER_LENGTH (request->evhttp_request
-					       ->input_buffer));
-	      evbuffer_add_buffer (request->evhttp_request->input_buffer,
-				   gzipped);
-	      evbuffer_free (gzipped);
-
-	      evbuffer_add_printf (request->data, "Content-Encoding: gzip\r\n");
-	      log ("Adding: Content-Encoding: gzip");
-	    }
+	  else if (accept_deflate)
+	    encode_compressed_content (request, 75, 1);
+	  else if (accept_gzip)
+	    encode_compressed_content (request, 75, 0);
+	  else
+	    log ("Client refuses gzip encoding: %s", accept_encoding);
 	}
       else
 	log ("Client refuses gzip encoding: %s", accept_encoding);

@@ -9,6 +9,5 @@ ziproxy_ng_SOURCES = main.c user_conn.h user_conn.c \
 	gzip.h gzip.c \
 	list.h \
 	log.h \
-	opts.c opts.h \
-	deflate.c deflate.h
+	opts.c opts.h
 

@@ -7,7 +7,7 @@
 #include "log.h"
 
 struct evbuffer *
-evbuffer_gzip (struct evbuffer *source, int min_ratio)
+evbuffer_gzip (struct evbuffer *source, int min_ratio, int deflate_flag)
 {
   struct evbuffer *target = evbuffer_new ();
 
@@ -18,8 +18,12 @@ evbuffer_gzip (struct evbuffer *source, int min_ratio)
   strm.zalloc = Z_NULL;
   strm.zfree = Z_NULL;
   strm.opaque = Z_NULL;
+  int window_size = 15 /* default.  */ + 16 /* gzip encoding */;
+  if (deflate_flag)
+    window_size = -15;
+
   ret = deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
-		     15 /* default.  */ + 16 /* gzip encoding */,
+		     window_size,
 		     8 /* default.  */,
 		     Z_DEFAULT_STRATEGY /* default.  But Z_RLE is
 					   better for PNG data.  */);
