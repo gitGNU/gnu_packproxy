@@ -12,6 +12,7 @@
 #include "http_headers.h"
 #include "log.h"
 #include "gzip.h"
+#include "jpeg.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
@@ -327,7 +328,8 @@ encode_compressed_content (struct http_request *request, int min_percent,
 			   compressed);
       evbuffer_free (compressed);
 
-      evbuffer_add_printf (request->data, "Content-Encoding: %s\r\n", encoding_type);
+      evbuffer_add_printf (request->data,
+			   "Content-Encoding: %s\r\n", encoding_type);
       log ("Adding: Content-Encoding: %s", encoding_type);
     }
 }
@@ -335,11 +337,14 @@ encode_compressed_content (struct http_request *request, int min_percent,
 void
 http_request_processed_cb (struct http_request *request)
 {
-  int we_prefer_deflate = 1;
   /* NB: REQUEST->EVHTTP_REQUEST will disappear when we return.  We
      must copy any data that we would like to preserve.  */
 
+  int we_prefer_deflate = 1;
+
   struct user_conn *user_conn = request->http_conn->user_conn;
+
+  struct evbuffer *payload = request->evhttp_request->input_buffer;
 
   assert (! request->data);
   request->data = evbuffer_new ();
@@ -394,7 +399,7 @@ http_request_processed_cb (struct http_request *request)
   if (! content_encoding
       /* gzip adds a 20 byte header.  If we don't have at least 100
 	 bytes it's not worth even trying.  */
-      && EVBUFFER_LENGTH (request->evhttp_request->input_buffer) > 100
+      && EVBUFFER_LENGTH (payload) > 100
       && (! content_type
 	  /* Don't bother trying to compress jpeg images.  */
 	  || (strcmp (content_type, "image/jpeg") != 0)))
@@ -427,19 +432,34 @@ http_request_processed_cb (struct http_request *request)
   else
     log ("Content-Encoding: %s; length: %d: Content-Type: %s",
 	 content_encoding,
-	 EVBUFFER_LENGTH (request->evhttp_request->input_buffer),
+	 EVBUFFER_LENGTH (payload),
 	 content_type);
+
+  if (content_type && strcmp (content_type, "image/jpeg") == 0)
+    {
+      struct evbuffer *result = jpeg_recompress (payload, 50);
+      if (result)
+	{
+	  log ("compressed (%s): %d -> %d",
+	       request->url,
+	       EVBUFFER_LENGTH (payload),
+	       EVBUFFER_LENGTH (result));
+
+	  evbuffer_drain (payload, EVBUFFER_LENGTH (payload));
+	  evbuffer_add_buffer (payload, result);
+	}
+    }
 
 
   /* Add a content-length field if there was none.  */
   evbuffer_add_printf (request->data, "Content-Length: %d\r\n",
-		       EVBUFFER_LENGTH (request->evhttp_request->input_buffer));
+		       EVBUFFER_LENGTH (payload));
   log ("Adding: Content-Length: %d",
-       EVBUFFER_LENGTH (request->evhttp_request->input_buffer));
+       EVBUFFER_LENGTH (payload));
 
   evbuffer_add_printf (request->data, "\r\n");
 
-  evbuffer_add_buffer (request->data, request->evhttp_request->input_buffer);
+  evbuffer_add_buffer (request->data, payload);
 
   if (request == user_conn_http_request_list_head (&user_conn->requests))
     /* We must answer requests in the order that we received them.
