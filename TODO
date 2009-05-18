@@ -1,2 +1,8 @@
+http POST support
+logging to an sqlite db
+jpeg support
+user management
+
+
 faulty sites:
 	facebook.com (the chat window fails)
