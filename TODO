@@ -1,2 +1,17 @@
 faulty sites:
 	facebook.com (the chat window fails)
+
+proper logging support
+ preferably to an sql db of some sort
+
+user management
+ - including accounting
+
+image recompression support
+
+http POST support, etc.
+
+header stripping
+ - lots of junk out there...
+
+ad-block
