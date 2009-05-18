@@ -12,6 +12,7 @@
 #include "http_headers.h"
 #include "log.h"
 #include "gzip.h"
+#include "deflate.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
@@ -375,7 +376,29 @@ http_request_processed_cb (struct http_request *request)
     {
       const char *accept_encoding
 	= http_headers_find (request->client_headers, "Accept-Encoding");
-      if (accept_encoding && strstr (accept_encoding, "gzip"))
+      if (accept_encoding && strstr (accept_encoding, "deflate"))
+	/* The client (appears to) accepts compressed encodings.  */
+	{
+	  struct evbuffer *deflated
+	    = evbuffer_deflate (request->evhttp_request->input_buffer, 75);
+	  if (deflated)
+	    {
+	      log ("deflate: %d -> %d",
+		   EVBUFFER_LENGTH (request->evhttp_request->input_buffer),
+		   EVBUFFER_LENGTH (deflated));
+
+	      evbuffer_drain (request->evhttp_request->input_buffer,
+			      EVBUFFER_LENGTH (request->evhttp_request
+					       ->input_buffer));
+	      evbuffer_add_buffer (request->evhttp_request->input_buffer,
+				   deflated);
+	      evbuffer_free (deflated);
+
+	      evbuffer_add_printf (request->data, "Content-Encoding: deflate\r\n");
+	      log ("Adding: Content-Encoding: deflate");
+	    }
+	}
+      else if (accept_encoding && strstr (accept_encoding, "gzip"))
 	/* The client (appears to) accepts gzip encodings.  */
 	{
 	  struct evbuffer *gzipped
