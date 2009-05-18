@@ -1,5 +1,6 @@
-AC_INIT(src/main.c)
-AM_INIT_AUTOMAKE(ziproxy-ng, 2.7.0)
+AC_INIT([ziproxy-ng],[2.7.0], [neal@walfield.org])
+AM_INIT_AUTOMAKE
+AC_CONFIG_SRCDIR([src/main.c])
 
 AC_PROG_CC
 

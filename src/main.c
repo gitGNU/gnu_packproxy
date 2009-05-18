@@ -8,9 +8,11 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "user_conn.h"
 #include "log.h"
+#include "opts.h"
 
 /* Event handler for incoming connections.  */
 static void
@@ -41,8 +43,9 @@ socket_event (int fd, short event, void *arg)
 
 struct event_base *event_base;
 
+
 int
-main (int argc, char *argv[])
+ziproxy_ng(struct arguments_t *arguments)
 {
   int ret;
 
@@ -68,7 +71,7 @@ main (int argc, char *argv[])
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = INADDR_ANY;
-  addr.sin_port = htons (7001);
+  addr.sin_port = htons (arguments->ziproxy_ng.port);
   ret = bind (server_socket, (struct sockaddr *) &addr, sizeof (addr));
   if (ret < 0)
     error (errno, 1, "bind()");
@@ -89,4 +92,16 @@ main (int argc, char *argv[])
   event_dispatch ();
 
   return 0;
+}
+
+int
+main (int argc, char *argv[])
+{
+  struct arguments_t arguments;
+
+  memset (&arguments, 0, sizeof (arguments));
+
+  parse_opts (argc, argv, &arguments);
+
+  return ziproxy_ng (&arguments);
 }
