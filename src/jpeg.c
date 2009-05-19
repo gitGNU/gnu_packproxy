@@ -24,6 +24,7 @@
 #include <assert.h>
 #include <jpeglib.h>
 #include <alloca.h>
+#include <setjmp.h>
 
 #include "log.h"
 
@@ -126,7 +127,6 @@ empty_output_buffer (j_compress_ptr cinfo)
   return TRUE;
 }
 
-
 static void
 term_destination (j_compress_ptr cinfo)
 {
@@ -142,14 +142,54 @@ term_destination (j_compress_ptr cinfo)
   EVBUFFER_LENGTH (dest->buffer) += written;
 }
 
+
+struct my_error_mgr
+{
+  struct jpeg_error_mgr jpeg_error_mgr;
+  jmp_buf *jmp_bufp;
+};
+
+static void
+error_exit (j_common_ptr cinfo)
+{
+  /* Emit the error message.  */
+  (*cinfo->err->output_message) (cinfo);
+
+  struct my_error_mgr *error_mgr = (struct my_error_mgr *) cinfo->err;
+  longjmp (*error_mgr->jmp_bufp, 1);
+}
+
+
 struct evbuffer *
 jpeg_recompress (struct evbuffer *source, int quality)
 {
-  /* Set up the decompresser.  */
+  struct jpeg_decompress_struct *decompressp = NULL;
+  struct jpeg_compress_struct *compressp = NULL;
+
   struct jpeg_decompress_struct decompress;
-  struct jpeg_error_mgr decompress_err;
-  decompress.err = jpeg_std_error (&decompress_err);
+  struct my_error_mgr error_mgr;
+  jpeg_std_error (&error_mgr.jpeg_error_mgr);
+
+  jmp_buf jmp_buf;
+  error_mgr.jmp_bufp = &jmp_buf;
+  error_mgr.jpeg_error_mgr.error_exit = error_exit;
+
+  if (setjmp (jmp_buf))
+    {
+      if (decompressp)
+	jpeg_destroy_decompress (decompressp);
+
+      if (compressp)
+	jpeg_destroy_compress (compressp);
+
+      return NULL;
+    }
+  
+
+  /* Set up the decompresser.  */
+  decompress.err = &error_mgr.jpeg_error_mgr;
   jpeg_create_decompress (&decompress);
+  decompressp = &decompress;
 
   /* Options for fast (quick 'n dirty) decompression.  */
   decompress.two_pass_quantize = FALSE;
@@ -189,16 +229,16 @@ jpeg_recompress (struct evbuffer *source, int quality)
        Don't even try.  */
     {
       log ("Image suspiciously large, not recompressing.");
-      jpeg_destroy_decompress(&decompress);
+      jpeg_destroy_decompress (&decompress);
       return NULL;
     }
 
 
   /* Set up the compressor.  */
   struct jpeg_compress_struct compress;
-  struct jpeg_error_mgr compress_err;
-  compress.err = jpeg_std_error (&compress_err);
+  compress.err = &error_mgr.jpeg_error_mgr;
   jpeg_create_compress (&compress);
+  compressp = &compress;
 
   struct my_destination_msg dest;
   compress.dest = &dest.pub;
