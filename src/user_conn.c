@@ -414,57 +414,59 @@ http_request_processed_cb (struct http_request *request)
 			   header->key, header->value);
     }
 
-  if (! content_encoding
-      /* gzip adds a 20 byte header.  If we don't have at least 100
-	 bytes it's not worth even trying.  */
-      && EVBUFFER_LENGTH (payload) > 100
-      && (! content_type
-	  /* Don't bother trying to compress jpeg images.  */
-	  || (strcmp (content_type, "image/jpeg") != 0)))
-    /* The data is not encoded and it looks like some sort of text.
-       gzip it!  */
+  if (EVBUFFER_LENGTH (payload) > 100)
     {
-      const char *accept_encoding
-	= http_headers_find (request->client_headers, "Accept-Encoding");
-      if (accept_encoding)
+      if (! content_encoding
+	  /* gzip adds a 20 byte header.  If we don't have at least 100
+	     bytes it's not worth even trying.  */
+	  && (! content_type
+	      /* Don't bother trying to compress jpeg images.  */
+	      || (strcmp (content_type, "image/jpeg") != 0)))
+	/* The data is not encoded and it looks like some sort of text.
+	   gzip it!  */
 	{
-	  char *accept_deflate = strstr (accept_encoding, "deflate");
-	  char *accept_gzip = strstr (accept_encoding, "gzip");
-	  if (accept_deflate && accept_gzip)
+	  const char *accept_encoding
+	    = http_headers_find (request->client_headers, "Accept-Encoding");
+	  if (accept_encoding)
 	    {
-	      if (we_prefer_deflate)
+	      char *accept_deflate = strstr (accept_encoding, "deflate");
+	      char *accept_gzip = strstr (accept_encoding, "gzip");
+	      if (accept_deflate && accept_gzip)
+		{
+		  if (we_prefer_deflate)
+		    encode_compressed_content (request, 75, 1);
+		  else
+		    encode_compressed_content (request, 75, 0);
+		}
+	      else if (accept_deflate)
 		encode_compressed_content (request, 75, 1);
-	      else
+	      else if (accept_gzip)
 		encode_compressed_content (request, 75, 0);
+	      else
+		log ("Client refuses gzip encoding: %s", accept_encoding);
 	    }
-	  else if (accept_deflate)
-	    encode_compressed_content (request, 75, 1);
-	  else if (accept_gzip)
-	    encode_compressed_content (request, 75, 0);
 	  else
 	    log ("Client refuses gzip encoding: %s", accept_encoding);
 	}
       else
-	log ("Client refuses gzip encoding: %s", accept_encoding);
-    }
-  else
-    log ("Content-Encoding: %s; length: %d: Content-Type: %s",
-	 content_encoding,
-	 EVBUFFER_LENGTH (payload),
-	 content_type);
+	log ("Content-Encoding: %s; length: %d: Content-Type: %s",
+	     content_encoding,
+	     EVBUFFER_LENGTH (payload),
+	     content_type);
 
-  if (content_type && strcmp (content_type, "image/jpeg") == 0)
-    {
-      struct evbuffer *result = jpeg_recompress (payload, 50);
-      if (result)
+      if (content_type && strcmp (content_type, "image/jpeg") == 0)
 	{
-	  log ("compressed (%s): %d -> %d",
-	       request->url,
-	       EVBUFFER_LENGTH (payload),
-	       EVBUFFER_LENGTH (result));
+	  struct evbuffer *result = jpeg_recompress (payload, 30);
+	  if (result)
+	    {
+	      log ("compressed (%s): %d -> %d",
+		   request->url,
+		   EVBUFFER_LENGTH (payload),
+		   EVBUFFER_LENGTH (result));
 
-	  evbuffer_drain (payload, EVBUFFER_LENGTH (payload));
-	  evbuffer_add_buffer (payload, result);
+	      evbuffer_drain (payload, EVBUFFER_LENGTH (payload));
+	      evbuffer_add_buffer (payload, result);
+	    }
 	}
     }
 
