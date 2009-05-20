@@ -459,13 +459,23 @@ http_request_processed_cb (struct http_request *request)
 	  struct evbuffer *result = jpeg_recompress (payload, 30);
 	  if (result)
 	    {
-	      log ("compressed (%s): %d -> %d",
+	      log (BOLD ("compressed (%s): %d -> %d (%d%%)"),
 		   request->url,
 		   EVBUFFER_LENGTH (payload),
-		   EVBUFFER_LENGTH (result));
+		   EVBUFFER_LENGTH (result),
+		   (EVBUFFER_LENGTH (result) * 100)
+		   / EVBUFFER_LENGTH (payload));
 
-	      evbuffer_drain (payload, EVBUFFER_LENGTH (payload));
-	      evbuffer_add_buffer (payload, result);
+	      if (EVBUFFER_LENGTH (result)
+		  < 90 * EVBUFFER_LENGTH (payload) / 100)
+		/* Only send if we get at least a 10% size reduction.
+		   Why only 10%?  Due to the quality reduction.  */
+		{
+		  evbuffer_drain (payload, EVBUFFER_LENGTH (payload));
+		  evbuffer_add_buffer (payload, result);
+		}
+	      else
+		log ("Too large, using original");
 	    }
 	}
     }
