@@ -182,7 +182,7 @@ user_conn_input (int fd, short event, void *arg)
 
       /* Allocate an http connection.  */
       struct http_conn *http_conn;
-      http_conn = http_conn_new (host, 80, conn);
+      http_conn = http_conn_new (host, conn);
       if (! http_conn)
 	{
 	  log ("Failed to create http connection.");

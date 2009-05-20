@@ -82,7 +82,7 @@ LIST_CLASS(user_conn_http_conn, struct http_conn, user_conn_node, false)
 /* Creates a new http connection to HOST on behalf of the user
    connection USER_CONN.  Attaches the new HTTP connection to
    USER_CONN->HTTP_CONNS.  */
-extern struct http_conn *http_conn_new (const char *host, short port,
+extern struct http_conn *http_conn_new (const char *host,
 					struct user_conn *user_conn);
 
 /* Frees CONN aborting any outstanding requests.  This disconnects

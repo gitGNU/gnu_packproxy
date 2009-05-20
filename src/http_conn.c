@@ -153,7 +153,7 @@ http_request_free (struct http_request *request)
 }
 
 struct http_conn *
-http_conn_new (const char *host, short port,
+http_conn_new (const char *host,
 	       struct user_conn *user_conn)
 {
   log ("New http connection to %s on behalf of %s",
@@ -169,10 +169,27 @@ http_conn_new (const char *host, short port,
 
   conn->user_conn = user_conn;
 
-  conn->evhttp_conn = evhttp_connection_new (host, port);
+  char *h = (char *) host;
+  int p = 80;
+  char *port = strchr (host, ':');
+  if (port)
+    {
+      p = atoi (port + 1);
+      if (! p)
+	p = 80;
+      else
+	{
+	  int len = (uintptr_t) port - (uintptr_t) host;
+	  h = alloca (len + 1);
+	  memcpy (h, host, len);
+	  h[len] = 0;
+	}
+    }
+
+  conn->evhttp_conn = evhttp_connection_new (h, p);
   if (! conn->evhttp_conn)
     {
-      log ("Cannot establish connection to %s:%d\n", host, port);
+      log ("Cannot establish connection to %s:%d\n", h, p);
       goto evhttp_connection_new_fail;
     }
 
