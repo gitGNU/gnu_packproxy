@@ -24,6 +24,8 @@
 
 #include "log.h"
 
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
+
 struct evbuffer *
 evbuffer_gzip (struct evbuffer *source, int min_ratio, int deflate_flag)
 {
@@ -68,19 +70,28 @@ evbuffer_gzip (struct evbuffer *source, int min_ratio, int deflate_flag)
 
       int produced = sizeof (buffer) - strm.avail_out;
       int consumed = EVBUFFER_LENGTH (source) - strm.avail_in;
-      if ((100 * produced) / consumed > min_ratio)
+      if (/* If we've consumed less than half of the data and the
+	   amount of produced data exceeds the desired threshold,
+	   abort.  */
+	  (consumed < EVBUFFER_LENGTH (source) / 2
+	   && (100 * produced) / consumed > min_ratio)
+	  /* If we've consumed more than half but not yet all data and
+	     the amount of produced data exceeds 97% of the consumed
+	     data, abort.  */
+	  || (consumed < produced
+	      && (100 * produced) / consumed > MAX (97, min_ratio))
+	  /* The amount of data produced is more than 99% of the
+	     source.  */
+	  || (100 * produced) / consumed > MAX (99, min_ratio))
 	{
 	  log (BOLD ("Aborted compression: %d/%d: %d%%"),
 	       produced, consumed,
 	       (100 * produced) / consumed);
-	  goto err;
+	  goto err_with_stream;
 	}
-	
+
       if (evbuffer_add (target, buffer, produced) < 0)
-	{
-	  (void)deflateEnd(&strm);
-	  goto err;
-	}
+	goto err_with_stream;
     }
   while (strm.avail_out == 0);
   assert(strm.avail_in == 0);     /* all input will be used */
@@ -91,6 +102,8 @@ evbuffer_gzip (struct evbuffer *source, int min_ratio, int deflate_flag)
 
   return target;
 
+ err_with_stream:
+  (void)deflateEnd(&strm);
  err:
   evbuffer_free (target);
   return NULL;

@@ -24,10 +24,16 @@
 #include <event.h>
 #include <zlib.h>
 
-/* gzip SOURCE.  Result is returned or NULL, if an error occured.  If
-   the output appears to be larger than MIN_PERCENT of the input, then
-   compression is aborted.  DEFLATE_FLAG makes the buffer be compressed in 
-   deflate-style rather than gzip-style when it is non-zero.
+/* gzip SOURCE.  Result is returned or NULL, if an error occured.
+
+   If, while processing the first half of the stream, it appears that
+   the result will be larger than MIN_PERCENT of the input, then
+   compression is aborted.  After the half way point, the threshold is
+   upped to MAX (97%, MIN_PRECENT).  On completion, it is set to MAX
+   (99%, MIN_PERCENT).
+
+   DEFLATE_FLAG makes the buffer be compressed in deflate-style rather
+   than gzip-style when it is non-zero.
  */
 struct evbuffer *evbuffer_gzip (struct evbuffer *source,
 				int min_percent, int deflate_flag);
