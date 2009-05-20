@@ -84,7 +84,12 @@ ziproxy_ng(struct arguments_t *arguments)
   ret = setsockopt (server_socket, SOL_SOCKET, SO_LINGER,
 		    (void *) &linger, (socklen_t) sizeof (linger));
   if (ret < 0)
-    error (errno, 0, "warning: setsockopt");
+    error (errno, 0, "warning: setsockopt (SO_LINGER)");
+  int reuse = 1;
+  ret = setsockopt (server_socket, SOL_SOCKET, SO_REUSEADDR,
+		    (void *) &reuse, (socklen_t) sizeof (reuse));
+  if (ret < 0)
+    error (errno, 0, "warning: setsockopt (SO_REUSEADDR)");
 
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
