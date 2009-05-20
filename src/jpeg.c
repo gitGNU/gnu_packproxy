@@ -119,6 +119,7 @@ empty_output_buffer (j_compress_ptr cinfo)
   evbuffer_expand (dest->buffer, EVBUFFER_LENGTH (dest->buffer) + CHUNK);
 
   dest->pub.next_output_byte
+    = dest->pos
     = EVBUFFER_DATA (dest->buffer) + EVBUFFER_LENGTH (dest->buffer);
   dest->pub.free_in_buffer
     = EVBUFFER_AVAILABLE (dest->buffer) - EVBUFFER_LENGTH (dest->buffer);
@@ -135,7 +136,6 @@ term_destination (j_compress_ptr cinfo)
   struct my_destination_msg *dest = (struct my_destination_msg *) cinfo->dest;
 
   int written = (intptr_t) dest->pub.next_output_byte - (intptr_t) dest->pos;
-  assert (written > 0);
   assert (written <= EVBUFFER_AVAILABLE (dest->buffer));
 
   /* evbuffer_expand does not adjust the length.  Do it now.  */
