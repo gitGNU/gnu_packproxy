@@ -71,9 +71,11 @@ http_request_complete (struct evhttp_request *evrequest, void *arg)
 }
 
 struct http_request *
-http_request_new (struct user_conn *user_conn,
-		  struct http_conn *http_conn, const char *url,
-		  struct http_headers *headers)
+http_request_new (struct user_conn *user_conn, struct http_conn *http_conn,
+		  const char *url, enum http_method method,
+		  struct http_headers *request_headers, struct evbuffer *body,
+		  enum http_version client_version,
+		  struct http_headers *client_headers)
 {
   assert (http_conn->evhttp_conn);
 
@@ -94,27 +96,30 @@ http_request_new (struct user_conn *user_conn,
       goto evhttp_request_new_fail;
     }
 
-  request->client_headers = headers;
+  request->client_headers = client_headers;
 
   /* Add the appropriate headers.  */
-  evhttp_add_header (request->evhttp_request->output_headers,
-		     "Host", http_conn->host);
-
   struct http_header *h;
-  for (h = headers->head; h; h = h->next)
-    if (strcmp (h->key, "Host") != 0)
-      {
-	evhttp_add_header(request->evhttp_request->output_headers,
-			  h->key, h->value);
-	log ("Forwarding: %s: %s", h->key, h->value);
-      }
+  for (h = request_headers->head; h; h = h->next)
+    {
+      evhttp_add_header (request->evhttp_request->output_headers,
+			 h->key, h->value);
+      log ("Sending: %s: %s", h->key, h->value);
+    }
 
+  http_headers_free (request_headers);
 
   http_conn_http_request_list_enqueue (&http_conn->requests,
 				       request);
 
   evhttp_make_request (http_conn->evhttp_conn, request->evhttp_request,
 		       EVHTTP_REQ_GET, url);
+
+  if (body)
+    {
+      evbuffer_add_buffer (request->evhttp_request->output_buffer, body);
+      evbuffer_free (body);
+    }
 
   http_conn->request_count ++;
 

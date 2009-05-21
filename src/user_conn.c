@@ -215,10 +215,30 @@ user_conn_input (int fd, short event, void *arg)
 	}
 
       /* Issue the request.  */
+      
+      /* Add the appropriate headers.  */
+      struct http_headers *request_headers = http_headers_new (NULL);
+
+      /* Forward most client provided headers, e.g., don't forward
+	 hop-by-hop headers.  */
+      struct http_header *h;
+      for (h = client_headers->head; h; h = h->next)
+	if (strcmp (h->key, "Connection") != 0
+	    && strcmp (h->key, "Keep-Alive") != 0
+	    && strcmp (h->key, "Public") != 0
+	    && strcmp (h->key, "Proxy-Authenticate") != 0
+	    && strcmp (h->key, "Transfer-Encoding") != 0
+	    && strcmp (h->key, "Upgrade") != 0)
+	  {
+	    http_headers_add (request_headers, h->key, h->value);
+	    log ("Forwarding: %s: %s", h->key, h->value);
+	  }
+
       *url_end = 0;
-      struct http_request *request = http_request_new (conn,
-						       http_conn, url,
-						       client_headers);
+      struct http_request *request
+	= http_request_new (conn, http_conn,
+			    url, HTTP_GET, request_headers, NULL,
+			    HTTP_11, client_headers);
       if (! request)
 	{
 	  log ("Failed to create http request.");

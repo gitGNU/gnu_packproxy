@@ -64,12 +64,18 @@ struct http_request
 };
 LIST_CLASS(http_conn_http_request, struct http_request, http_conn_node, true)
 
-/* Forward the request for the resource identified by URL over the
-   connection CONN.  This function assumes ownership of HEADERS!  */
-extern struct http_request *http_request_new (struct user_conn *user_conn,
-					      struct http_conn *http_conn,
-					      const char *url,
-					      struct http_headers *headers);
+/* Issue a request over the connection HTTP_CONN for the resource URL.
+   This function assumes ownership of HEADERS, BODY and
+   CLIENT_HEADERS!
+
+   CLIENT_VERSION and CLIENT_HEADERS are uninterpreted.
+
+   When the request completes, calls http_request_processed_cb.  */
+extern struct http_request *http_request_new
+  (struct user_conn *user_conn, struct http_conn *http_conn,
+   const char *url, enum http_method method,
+   struct http_headers *headers, struct evbuffer *body,
+   enum http_version client_version, struct http_headers *client_headers);
 
 /* Frees REQUEST.  The request must not be outstanding.  (If so,
    you'll have to abort the http connection.)  */
