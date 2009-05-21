@@ -223,12 +223,16 @@ user_conn_input (int fd, short event, void *arg)
 	 hop-by-hop headers.  */
       struct http_header *h;
       for (h = client_headers->head; h; h = h->next)
-	if (strcmp (h->key, "Connection") != 0
-	    && strcmp (h->key, "Keep-Alive") != 0
-	    && strcmp (h->key, "Public") != 0
-	    && strcmp (h->key, "Proxy-Authenticate") != 0
-	    && strcmp (h->key, "Transfer-Encoding") != 0
-	    && strcmp (h->key, "Upgrade") != 0)
+	if (strcmp (h->key, "Connection") == 0)
+	  {
+	    if (strcmp (h->value, "Closed") == 0)
+	      conn->closed = true;
+	  }
+	else if (strcmp (h->key, "Keep-Alive") != 0
+		 && strcmp (h->key, "Public") != 0
+		 && strcmp (h->key, "Proxy-Authenticate") != 0
+		 && strcmp (h->key, "Transfer-Encoding") != 0
+		 && strcmp (h->key, "Upgrade") != 0)
 	  {
 	    http_headers_add (request_headers, h->key, h->value);
 	    log ("Forwarding: %s: %s", h->key, h->value);
@@ -378,6 +382,10 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
       bufferevent_disable (user_conn->output, EV_WRITE);
       user_conn->sending = false;
       user_conn_deref (user_conn);
+
+      if (! message && user_conn->closed)
+	/* The user closed the connection.  */
+	user_conn_free (user_conn);
     }
 }
 
@@ -503,6 +511,16 @@ http_request_processed_cb (struct http_request *request)
 			   header->key, header->value);
     }
 
+  if (user_conn->closed)
+    /* The user closed the connection.  Signal that this is the last
+       transfer.  */
+    evbuffer_add_printf (message, "Connection: Closed\r\n",
+			 header->key, header->value);
+
+  bool connection_closed = false;
+  if (connection && strcmp (connection, "Closed") == 0)
+    connection_closed = true;
+
   if (EVBUFFER_LENGTH (payload) > 100)
     {
       if (! content_encoding
@@ -581,7 +599,10 @@ http_request_processed_cb (struct http_request *request)
 
   evbuffer_add_buffer (message, payload);
 
-  http_request_free (request);
+  if (connection_closed)
+    http_conn_free (request->http_conn);
+  else
+    http_request_free (request);
 
   /* Mark the response as ready to be sent.  */
   response->ready_to_go = true;

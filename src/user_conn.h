@@ -73,6 +73,10 @@ struct user_conn
   /* Number of bytes sent to web servers.  */
   int server_out_bytes;
 
+  /* Whether the user closed the connection.  In which case, after
+     sending all of the output, tear this connection down.  */
+  bool closed;
+
   char ip[0];
 };
 
