@@ -225,7 +225,7 @@ user_conn_input (int fd, short event, void *arg)
       for (h = client_headers->head; h; h = h->next)
 	if (strcmp (h->key, "Connection") == 0)
 	  {
-	    if (strcmp (h->value, "Closed") == 0)
+	    if (strcmp (h->value, "close") == 0)
 	      conn->closed = true;
 	  }
 	else if (strcmp (h->key, "Keep-Alive") != 0
@@ -514,11 +514,11 @@ http_request_processed_cb (struct http_request *request)
   if (user_conn->closed)
     /* The user closed the connection.  Signal that this is the last
        transfer.  */
-    evbuffer_add_printf (message, "Connection: Closed\r\n",
+    evbuffer_add_printf (message, "Connection: close\r\n",
 			 header->key, header->value);
 
   bool connection_closed = false;
-  if (connection && strcmp (connection, "Closed") == 0)
+  if (connection && strcmp (connection, "close") == 0)
     connection_closed = true;
 
   if (EVBUFFER_LENGTH (payload) > 100)
