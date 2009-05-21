@@ -38,9 +38,20 @@ struct http_headers
   struct obstack data;
 };
 
+/* HEADERS is either NULL or a string consisting of a series of
+
+     key: value\r\n
+     key: value
+
+   Note that the last value does not have a \r\n.
+*/
 extern struct http_headers *http_headers_new (const char *headers);
 
 extern void http_headers_free (struct http_headers *headers);
+
+/* Add the <KEY, VALUE> to HEADERS.  */
+extern void http_headers_add (struct http_headers *headers,
+			      const char *key, const char *value);
 
 /* Return the value of the header with key KEY.  Returns NULL if there
    is no such header.  */

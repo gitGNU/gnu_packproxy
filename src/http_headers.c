@@ -22,6 +22,21 @@
 #include "http_headers.h"
 #include "log.h"
 
+void
+http_headers_add (struct http_headers *headers,
+		  const char *key, const char *value)
+{
+  struct http_header *header
+    = obstack_alloc (&headers->data, sizeof (struct http_header));
+
+  header->key_len = strlen (key);
+  header->key = obstack_copy0 (&headers->data, key, header->key_len);
+  header->value = obstack_copy0 (&headers->data, value, strlen (value));
+
+  header->next = headers->head;
+  headers->head = header;
+}
+
 struct http_headers *
 http_headers_new (const char *headers)
 {
@@ -29,46 +44,49 @@ http_headers_new (const char *headers)
 
   obstack_init (&h->data);
 
-  char *colon;
-  while (headers && (colon = strchr (headers, ':')))
+  if (headers)
     {
-      const char *key = headers;
-
-      struct http_header *header
-	= obstack_alloc (&h->data, sizeof (struct http_header));
-
-      int len = (intptr_t) colon - (intptr_t) key;
-      header->key = obstack_copy0 (&h->data, key, len);
-      header->key_len = len;
-
-      headers = colon + 1;
-      if (*headers == ' ')
-	headers ++;
-
-      const char *value = headers;
-
-      const char *end = strchr (headers, '\n');
-      len = 0;
-      if (end)
+      char *colon;
+      while (headers && (colon = strchr (headers, ':')))
 	{
-	  if (end[-1] == '\r')
-	    len = -1;
-	  len += (intptr_t) end - (intptr_t) value;
+	  const char *key = headers;
 
-	  headers = end + 1;
+	  struct http_header *header
+	    = obstack_alloc (&h->data, sizeof (struct http_header));
+
+	  int len = (intptr_t) colon - (intptr_t) key;
+	  header->key = obstack_copy0 (&h->data, key, len);
+	  header->key_len = len;
+
+	  headers = colon + 1;
+	  if (*headers == ' ')
+	    headers ++;
+
+	  const char *value = headers;
+
+	  const char *end = strchr (headers, '\n');
+	  len = 0;
+	  if (end)
+	    {
+	      if (end[-1] == '\r')
+		len = -1;
+	      len += (intptr_t) end - (intptr_t) value;
+
+	      headers = end + 1;
+	    }
+	  else
+	    {
+	      headers = NULL;
+	      len = strlen (value);
+	    }
+
+	  header->value = obstack_copy0 (&h->data, value, len);
+
+	  log ("Found %s: %s", header->key, header->value);
+
+	  header->next = h->head;
+	  h->head = header;
 	}
-      else
-	{
-	  headers = NULL;
-	  len = strlen (value);
-	}
-
-      header->value = obstack_copy0 (&h->data, value, len);
-
-      log ("Found %s: %s", header->key, header->value);
-
-      header->next = h->head;
-      h->head = header;
     }
 
   return h;
