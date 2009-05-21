@@ -23,9 +23,9 @@
 #include <sys/types.h>
 #include <event.h>
 
+#include "http_request.h"
 #include "list.h"
 
-LIST_CLASS_TYPE(user_conn_http_request)
 LIST_CLASS_TYPE(user_conn_http_conn)
 
 struct user_conn

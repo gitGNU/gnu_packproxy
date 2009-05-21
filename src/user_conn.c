@@ -27,6 +27,7 @@
 
 #include "user_conn.h"
 #include "http_conn.h"
+#include "http_request.h"
 #include "http_headers.h"
 #include "log.h"
 #include "gzip.h"
