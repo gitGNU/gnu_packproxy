@@ -24,6 +24,7 @@
 #include <event.h>
 
 #include "http_headers.h"
+#include "http_message.h"
 #include "list.h"
 
 enum http_version
@@ -34,28 +35,27 @@ enum http_version
 
 struct http_request
 {
+  struct http_message message;
+
   struct evhttp_request *evhttp_request;
 
   enum http_version client_version;
   /* The client's HTTP headers.  */
   struct http_headers *client_headers;
 
-  /* The returned data.  */
-  struct evbuffer *data;
-
-  /* The http connection that was used.  */
+  /* The http connection.  */
   struct http_conn *http_conn;
 
   struct list_node http_conn_node;
-  struct list_node user_conn_node;
 
   char url[0];
 };
-LIST_CLASS(user_conn_http_request, struct http_request, user_conn_node, true)
 LIST_CLASS(http_conn_http_request, struct http_request, http_conn_node, true)
 
-/* This function assumes ownership of HEADERS!  */
-extern struct http_request *http_request_new (struct http_conn *conn,
+/* Forward the request for the resource identified by URL over the
+   connection CONN.  This function assumes ownership of HEADERS!  */
+extern struct http_request *http_request_new (struct user_conn *user_conn,
+					      struct http_conn *http_conn,
 					      const char *url,
 					      struct http_headers *headers);
 

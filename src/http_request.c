@@ -26,6 +26,7 @@
 
 #include "http_request.h"
 #include "http_conn.h"
+#include "user_conn.h"
 #include "log.h"
 
 static void
@@ -67,23 +68,18 @@ http_request_complete (struct evhttp_request *evrequest, void *arg)
   }
 
   http_request_processed_cb (request);
-
-  /* REQUEST->HTTP_CONN owns EVREQUEST!  When we return, it will be
-     deallocated.  Make sure we don't access it again.  */
-  request->evhttp_request = NULL;
 }
 
 struct http_request *
-http_request_new (struct http_conn *http_conn, const char *url,
+http_request_new (struct user_conn *user_conn,
+		  struct http_conn *http_conn, const char *url,
 		  struct http_headers *headers)
 {
   assert (http_conn->evhttp_conn);
-  assert (http_conn->user_conn);
 
   int url_len = strlen (url);
   struct http_request *request = calloc (sizeof (*request) + url_len + 1, 1);
-  memcpy (request->url, url, url_len);
-  request->url[url_len] = 0;
+  memcpy (request->url, url, url_len + 1);
 
   request->http_conn = http_conn;
 
@@ -113,15 +109,16 @@ http_request_new (struct http_conn *http_conn, const char *url,
 	log ("Forwarding: %s: %s", h->key, h->value);
       }
 
+
   http_conn_http_request_list_enqueue (&http_conn->requests,
-				       request);
-  user_conn_http_request_list_enqueue (&http_conn->user_conn->requests,
 				       request);
 
   evhttp_make_request (http_conn->evhttp_conn, request->evhttp_request,
 		       EVHTTP_REQ_GET, url);
 
   http_conn->request_count ++;
+
+  http_message_init (&request->message, HTTP_REQUEST, user_conn, NULL);
 
   return request;
 
@@ -133,22 +130,15 @@ http_request_new (struct http_conn *http_conn, const char *url,
 void
 http_request_free (struct http_request *request)
 {
-  /* There is no way to abort an outstanding request unless the whole
-     connection is torn down...  */
-  assert (! request->evhttp_request);
+  /* REQUEST->HTTP_CONN owns REQUEST->EVHTTP_REQUEST.  It will free
+     it.  */
 
-  if (request->data)
-    {
-      evbuffer_free (request->data);
-      request->data = NULL;
-    }
+  http_message_destroy (&request->message);
 
   http_headers_free (request->client_headers);
 
   /* Unlink.  */
   http_conn_http_request_list_unlink (&request->http_conn->requests, request);
-  user_conn_http_request_list_unlink (&request->http_conn->user_conn->requests,
-				      request);
 
   free (request);
 }

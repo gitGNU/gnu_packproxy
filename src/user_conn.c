@@ -28,6 +28,7 @@
 #include "user_conn.h"
 #include "http_conn.h"
 #include "http_request.h"
+#include "http_response.h"
 #include "http_headers.h"
 #include "log.h"
 #include "gzip.h"
@@ -192,7 +193,8 @@ user_conn_input (int fd, short event, void *arg)
 
       /* Issue the request.  */
       *url_end = 0;
-      struct http_request *request = http_request_new (http_conn, url,
+      struct http_request *request = http_request_new (conn,
+						       http_conn, url,
 						       client_headers);
       if (! request)
 	{
@@ -268,7 +270,7 @@ user_conn_free (struct user_conn *user_conn)
       next = user_conn_http_conn_list_next (http_conn);
       http_conn_free (http_conn);
     }
-  assert (! user_conn_http_request_list_head (&user_conn->requests));
+  assert (! user_conn_http_message_list_head (&user_conn->messages));
 
   if (&user_conn->start >= 0)
     event_del (&user_conn->input);
@@ -298,24 +300,32 @@ user_conn_deref_ (struct user_conn *user_conn, const char *caller)
     user_conn_free (user_conn);
 }
 
+
 static void
 user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
 {
   struct user_conn *user_conn = arg;
 
-  struct http_request *request
-    = user_conn_http_request_list_head (&user_conn->requests);
-  assert (request);
-  http_request_free (request);
+  struct http_message *message
+    = user_conn_http_message_list_head (&user_conn->messages);
+  assert (message);
+  assert (message->type == HTTP_RESPONSE);
+  http_message_free (message);
 
-  request = user_conn_http_request_list_head (&user_conn->requests);
-  if (request && request->data)
-    /* Start copying the next buffer.  */
+
+  /* See if a response is pending.  */
+  message = user_conn_http_message_list_head (&user_conn->messages);
+  if (message && message->type == HTTP_RESPONSE
+      && ((struct http_response *) message)->ready_to_go)
+    /* Start copying the next response.  */
     {
-      log ("%s: sending %d bytes to client",
-	   request->url, EVBUFFER_LENGTH (request->data));
-      user_conn->client_out_bytes += EVBUFFER_LENGTH (request->data);
-      bufferevent_write_buffer (user_conn->output, request->data);
+      struct http_response *response = (struct http_response *) message;
+
+      int len = EVBUFFER_LENGTH (response->buffer);
+      log ("sending %d bytes to client", len);
+      user_conn->client_out_bytes += len;
+
+      bufferevent_write_buffer (user_conn->output, response->buffer);
     }
   else
     {
@@ -326,7 +336,9 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
 }
 
 static void
-encode_compressed_content (struct http_request *request, int min_percent, 
+encode_compressed_content (struct http_request *request,
+			   struct http_response *response,
+			   int min_percent, 
 			   int deflate_flag)
 {
   char *encoding_type = deflate_flag ? "deflate" : "gzip";
@@ -347,7 +359,7 @@ encode_compressed_content (struct http_request *request, int min_percent,
 			   compressed);
       evbuffer_free (compressed);
 
-      evbuffer_add_printf (request->data,
+      evbuffer_add_printf (response->buffer,
 			   "Content-Encoding: %s\r\n", encoding_type);
       log ("Adding: Content-Encoding: %s", encoding_type);
     }
@@ -365,14 +377,14 @@ http_request_processed_cb (struct http_request *request)
 
   struct evbuffer *payload = request->evhttp_request->input_buffer;
 
-  assert (! request->data);
-  request->data = evbuffer_new ();
+  struct http_response *response = http_response_new (user_conn, request);
+  struct evbuffer *message = response->buffer;
 
   log ("%s: response code line: `%s'",
        request->url,
        request->evhttp_request->response_code_line);
 
-  evbuffer_add_printf (request->data,
+  evbuffer_add_printf (message,
 		       "HTTP/%d.%d %d %s\r\n",
 		       request->evhttp_request->major,
 		       request->evhttp_request->minor,
@@ -411,7 +423,7 @@ http_request_processed_cb (struct http_request *request)
 
       log ("Forwarding: %s: %s", header->key, header->value);
 
-      evbuffer_add_printf (request->data, "%s: %s\r\n",
+      evbuffer_add_printf (message, "%s: %s\r\n",
 			   header->key, header->value);
     }
 
@@ -435,14 +447,14 @@ http_request_processed_cb (struct http_request *request)
 	      if (accept_deflate && accept_gzip)
 		{
 		  if (we_prefer_deflate)
-		    encode_compressed_content (request, 75, 1);
+		    encode_compressed_content (request, response, 75, 1);
 		  else
-		    encode_compressed_content (request, 75, 0);
+		    encode_compressed_content (request, response, 75, 0);
 		}
 	      else if (accept_deflate)
-		encode_compressed_content (request, 75, 1);
+		encode_compressed_content (request, response, 75, 1);
 	      else if (accept_gzip)
-		encode_compressed_content (request, 75, 0);
+		encode_compressed_content (request, response, 75, 0);
 	      else
 		log ("Client refuses gzip encoding: %s", accept_encoding);
 	    }
@@ -484,31 +496,30 @@ http_request_processed_cb (struct http_request *request)
     }
 
 
-  /* Add a content-length field if there was none.  */
-  evbuffer_add_printf (request->data, "Content-Length: %d\r\n",
+  /* Add a content-length field.  */
+  evbuffer_add_printf (message, "Content-Length: %d\r\n",
 		       EVBUFFER_LENGTH (payload));
-  log ("Adding: Content-Length: %d",
-       EVBUFFER_LENGTH (payload));
+  log ("Adding: Content-Length: %d", EVBUFFER_LENGTH (payload));
 
-  evbuffer_add_printf (request->data, "\r\n");
+  evbuffer_add_printf (message, "\r\n");
 
-  evbuffer_add_buffer (request->data, payload);
+  evbuffer_add_buffer (message, payload);
 
-  if (request == user_conn_http_request_list_head (&user_conn->requests))
+  http_request_free (request);
+
+  response->ready_to_go = true;
+
+  if ((struct http_message *) response
+      == user_conn_http_message_list_head (&user_conn->messages))
     /* We must answer requests in the order that we received them.
        This is the next request to answer.  Start copying the
        data.  */
     {
       user_conn_ref (user_conn);
 
-      user_conn->client_out_bytes += EVBUFFER_LENGTH (request->data);
-      log ("%s: sending %d bytes to client",
-	   request->url, EVBUFFER_LENGTH (request->data));
-      bufferevent_write_buffer (user_conn->output, request->data);
+      user_conn->client_out_bytes += EVBUFFER_LENGTH (message);
+      log ("sending %d bytes to client", EVBUFFER_LENGTH (message));
+      bufferevent_write_buffer (user_conn->output, message);
       bufferevent_enable (user_conn->output, EV_WRITE);
     }
-
-  if (connection && strcasecmp (connection, "close") == 0)
-    /* The server is closing the connection.  */
-    /* XXX: Do something intelligent.  */;
 }

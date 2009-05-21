@@ -24,7 +24,6 @@
 #include <event.h>
 #include <evhttp.h>
 
-#include "user_conn.h"
 #include "http_request.h"
 #include "list.h"
 
@@ -47,7 +46,7 @@ struct http_conn
   /* The host this connection corresponds to.  */
   char host[0];
 };
-LIST_CLASS(user_conn_http_conn, struct http_conn, user_conn_node, false)
+LIST_CLASS(user_conn_http_conn, struct http_conn, user_conn_node, true)
 
 
 /* Creates a new http connection to HOST on behalf of the user

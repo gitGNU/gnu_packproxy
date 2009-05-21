@@ -25,6 +25,7 @@
 #include <ctype.h>
 
 #include "http_conn.h"
+#include "user_conn.h"
 #include "log.h"
 
 struct http_conn *

@@ -23,10 +23,8 @@
 #include <sys/types.h>
 #include <event.h>
 
-#include "http_request.h"
+#include "http_conn.h"
 #include "list.h"
-
-LIST_CLASS_TYPE(user_conn_http_conn)
 
 struct user_conn
 {
@@ -52,10 +50,12 @@ struct user_conn
 
   /* List of http connections owned by this user connection.  */
   struct user_conn_http_conn_list http_conns;
-  /* List of outstanding http requests owned by this user connection.
-     This list is maintained in request order as a response must be
-     delivered in the order in which it was received.  */
-  struct user_conn_http_request_list requests;
+
+  /* List of outstanding http messages (requests and responses) owned
+     by this user connection.  This list is maintained in request
+     order as a response must be delivered in the order in which it
+     was received.  */
+  struct user_conn_http_message_list messages;
 
   int refs;
 
@@ -94,7 +94,10 @@ extern void user_conn_deref_ (struct user_conn *user_conn, const char *caller);
 
 /* The data associated with the request ID is in buffer OUTPUT.
    OUTPUT is owned by the callee.  This is called by the downloader
-   when a request has been retrieved (and processed).  */
+   when a request has been retrieved (and processed).
+
+   NB: When this function returns, REQUEST->EVHTTP_REQUEST will be
+   deallocated.  */
 extern void http_request_processed_cb (struct http_request *request);
 
 #endif
