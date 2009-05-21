@@ -205,13 +205,23 @@ user_conn_input (int fd, short event, void *arg)
 	  continue;
 	}
 
-      /* Allocate an http connection.  */
+      /* Try to reuse an existing server connection.  */
       struct http_conn *http_conn;
-      http_conn = http_conn_new (host, conn);
+      for (http_conn = user_conn_http_conn_list_head (&conn->http_conns);
+	   http_conn;
+	   http_conn = user_conn_http_conn_list_next (http_conn))
+	if (strcmp (host, http_conn->host) == 0)
+	  break;
+
       if (! http_conn)
+	/* Allocate an http connection.  */
 	{
-	  log ("Failed to create http connection.");
-	  continue;
+	  http_conn = http_conn_new (host, conn);
+	  if (! http_conn)
+	    {
+	      log ("Failed to create http connection.");
+	      continue;
+	    }
 	}
 
       /* Issue the request.  */
