@@ -62,8 +62,8 @@ socket_event (int fd, short event, void *arg)
 struct event_base *event_base;
 
 
-int
-ziproxy_ng(struct arguments_t *arguments)
+static int
+pack_proxy (struct arguments_t *arguments)
 {
   int ret;
 
@@ -126,5 +126,5 @@ main (int argc, char *argv[])
 
   parse_opts (argc, argv, &arguments);
 
-  return ziproxy_ng (&arguments);
+  return pack_proxy (&arguments);
 }
