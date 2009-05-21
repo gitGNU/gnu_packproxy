@@ -242,7 +242,9 @@ user_conn_input (int fd, short event, void *arg)
 		 && strcmp (h->key, "Public") != 0
 		 && strcmp (h->key, "Proxy-Authenticate") != 0
 		 && strcmp (h->key, "Transfer-Encoding") != 0
-		 && strcmp (h->key, "Upgrade") != 0)
+		 && strcmp (h->key, "Upgrade") != 0
+
+		 && strcmp (h->key, "Range") != 0)
 	  {
 	    http_headers_add (request_headers, h->key, h->value);
 	    log ("Forwarding: %s: %s", h->key, h->value);
@@ -514,6 +516,11 @@ http_request_processed_cb (struct http_request *request)
 	content_encoding = header->value;
       else if (strcasecmp (header->key, "content-type") == 0)
 	content_type = header->value;
+
+      /* Don't both sending these headers...  */
+      else if (strcasecmp (header->key, "Server") == 0)
+	continue;
+
 
       log ("Forwarding: %s: %s", header->key, header->value);
 
