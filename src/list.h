@@ -23,6 +23,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stddef.h>
 
 /* A circular linked-list implementation.  */
