@@ -180,7 +180,16 @@ jpeg_recompress (struct evbuffer *source, int quality)
 	jpeg_destroy_decompress (decompressp);
 
       if (compressp)
-	jpeg_destroy_compress (compressp);
+	{
+	  if (compressp->dest)
+	    {
+	      struct my_destination_msg *dest
+		= (struct my_destination_msg *) compressp->dest;
+	      evbuffer_free (dest->buffer);
+	    }
+
+	  jpeg_destroy_compress (compressp);
+	}
 
       return NULL;
     }
@@ -236,6 +245,10 @@ jpeg_recompress (struct evbuffer *source, int quality)
 
   /* Set up the compressor.  */
   struct jpeg_compress_struct compress;
+  /* Set COMPRESS.DEST to NULL.  Then, in case we error out in
+     jpeg_create_compress, we know in the error handler that
+     DEST.BUFFER has not yet been initialized.  */
+  compress.dest = NULL;
   compress.err = &error_mgr.jpeg_error_mgr;
   jpeg_create_compress (&compress);
   compressp = &compress;

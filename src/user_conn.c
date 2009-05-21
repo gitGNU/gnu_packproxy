@@ -477,6 +477,8 @@ http_request_processed_cb (struct http_request *request)
 		}
 	      else
 		log ("Too large, using original");
+
+	      evbuffer_free (result);
 	    }
 	}
     }
