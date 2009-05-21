@@ -29,8 +29,19 @@
 
 enum http_version
   {
-    HTTP_10,
+    HTTP_10 = 1,
     HTTP_11,
+  };
+
+enum http_method
+  {
+    HTTP_OPTIONS = 10,
+    HTTP_GET,
+    HTTP_HEAD,
+    HTTP_POST,
+    HTTP_PUT,
+    HTTP_DELETE,
+    HTTP_TRACE
   };
 
 struct http_request
@@ -39,6 +50,7 @@ struct http_request
 
   struct evhttp_request *evhttp_request;
 
+  /* The client's version.  */
   enum http_version client_version;
   /* The client's HTTP headers.  */
   struct http_headers *client_headers;

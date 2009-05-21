@@ -33,6 +33,7 @@ struct user_conn
 
 
   /* The output side of the processing.  */
+  bool sending;
   struct bufferevent *output;
 
 
@@ -91,6 +92,9 @@ extern void user_conn_ref_ (struct user_conn *user_conn, const char *caller);
 
 #define user_conn_deref(_uc) user_conn_deref_(_uc, __FUNCTION__)
 extern void user_conn_deref_ (struct user_conn *user_conn, const char *caller);
+
+/* Should be called after enqueuing a ready response.  */
+extern void user_conn_kick (struct user_conn *user_conn);
 
 /* The data associated with the request ID is in buffer OUTPUT.
    OUTPUT is owned by the callee.  This is called by the downloader

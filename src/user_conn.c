@@ -146,12 +146,35 @@ user_conn_input (int fd, short event, void *arg)
 
       int verb_len = (intptr_t) verb_end - (intptr_t) verb;
 
-      if (! ((verb_len == 3 && memcmp (verb, "GET", 3) == 0)
-	     || (verb_len == 4 && memcmp (verb, "HEAD", 4) == 0)))
+      enum http_method method = -1;
+      if (verb_len == 3 && memcmp (verb, "GET", 3) == 0)
+	method = HTTP_GET;
+#if 0
+      else if (verb_len == 4 && memcmp (verb, "POST", 4) == 0)
+	method = HTTP_POST;
+      else if (verb_len == 4 && memcmp (verb, "HEAD", 4) == 0)
+	method = HTTP_HEAD;
+      else if (verb_len == 3 && memcmp (verb, "PUT", 3) == 0)
+	method = HTTP_PUT;
+      else if (verb_len == 7 && memcmp (verb, "DELETE", 7) == 0)
+	method = HTTP_DELETE;
+      else if (verb_len == 7 && memcmp (verb, "OPTIONS", 7) == 0)
+	method = HTTP_OPTIONS;
+      else if (verb_len == 5 && memcmp (verb, "TRACE", 5) == 0)
+	method = HTTP_DELETE;
+#endif
+      else
 	{
 	  log ("Request (%s) does not include supported verb!", command);
+	  struct http_response *response = http_response_new (conn, NULL);
+	  evbuffer_add_printf (response->buffer,
+			       "HTTP 1.1 501 Unsupported method.\n\r");
+	  response->ready_to_go = true;
+	  user_conn_kick (conn);
+	  
 	  continue;
 	}
+
       const char *url = verb_end + 1;
       while (*url == ' ')
 	url ++;
@@ -306,6 +329,8 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
 {
   struct user_conn *user_conn = arg;
 
+  assert (user_conn->sending);
+
   struct http_message *message
     = user_conn_http_message_list_head (&user_conn->messages);
   assert (message);
@@ -331,7 +356,38 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
     {
       /* Disable the copying.  */
       bufferevent_disable (user_conn->output, EV_WRITE);
+      user_conn->sending = false;
       user_conn_deref (user_conn);
+    }
+}
+
+void
+user_conn_kick (struct user_conn *user_conn)
+{
+  if (user_conn->sending)
+    /* Already sending.  */
+    return;
+
+  struct http_message *message
+    = user_conn_http_message_list_head (&user_conn->messages);
+  if (! message)
+    /* Nothing waiting.  */
+    return;
+  if (message->type != HTTP_RESPONSE)
+    /* Not a response.  */
+    return;
+
+  struct http_response *response = (struct http_response *) message;
+  if (response->ready_to_go)
+    /* The response is finished.  Queue it up.  */
+    {
+      user_conn_ref (user_conn);
+      user_conn->sending = true;
+
+      user_conn->client_out_bytes += EVBUFFER_LENGTH (response->buffer);
+      log ("sending %d bytes to client", EVBUFFER_LENGTH (response->buffer));
+      bufferevent_write_buffer (user_conn->output, response->buffer);
+      bufferevent_enable (user_conn->output, EV_WRITE);
     }
 }
 
@@ -507,19 +563,8 @@ http_request_processed_cb (struct http_request *request)
 
   http_request_free (request);
 
+  /* Mark the response as ready to be sent.  */
   response->ready_to_go = true;
-
-  if ((struct http_message *) response
-      == user_conn_http_message_list_head (&user_conn->messages))
-    /* We must answer requests in the order that we received them.
-       This is the next request to answer.  Start copying the
-       data.  */
-    {
-      user_conn_ref (user_conn);
-
-      user_conn->client_out_bytes += EVBUFFER_LENGTH (message);
-      log ("sending %d bytes to client", EVBUFFER_LENGTH (message));
-      bufferevent_write_buffer (user_conn->output, message);
-      bufferevent_enable (user_conn->output, EV_WRITE);
-    }
+  /* Start sending, if appropriate.  */
+  user_conn_kick (user_conn);
 }
