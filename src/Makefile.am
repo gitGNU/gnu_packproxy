@@ -14,5 +14,7 @@ packproxy_SOURCES = main.c \
 	jpeg.h jpeg.c \
 	list.h \
 	log.h \
-	opts.c opts.h
+	opts.c opts.h \
+	\
+	http.c http-internal.h strlcpy-internal.h sys/tree.h
 
