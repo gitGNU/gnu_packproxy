@@ -279,9 +279,21 @@ user_conn_input (int fd, short event, void *arg)
 	}
 
       *url_end = 0;
+
+      const char *resource = url;
+      if (strncasecmp (url, "http://", 7) == 0
+	  && strncasecmp (url + 7, host, strlen (host)) == 0)
+	{
+	  resource += 7 + strlen (host);
+	  if (*resource == 0)
+	    resource = "/";
+	  else if (*resource != '/')
+	    resource = url;
+	}
+
       struct http_request *request
 	= http_request_new (conn, http_conn,
-			    url, HTTP_GET, request_headers, NULL,
+			    resource, HTTP_GET, request_headers, NULL,
 			    client_version, client_headers);
       if (! request)
 	{
@@ -504,10 +516,12 @@ http_request_processed_cb (struct http_request *request)
   struct http_response *response = http_response_new (user_conn, request);
   struct evbuffer *message = response->buffer;
 
-  log ("%s: response code %d: %s",
+  log ("%s -> %d: %s (HTTP/%d.%d)",
        request->url,
        request->evhttp_request->response_code,
-       request->evhttp_request->response_code_line);
+       request->evhttp_request->response_code_line,
+       request->evhttp_request->major,
+       request->evhttp_request->minor);
 
   evbuffer_add_printf (message,
 		       "HTTP/%d.%d %d %s\r\n",
