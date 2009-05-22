@@ -33,8 +33,10 @@ http_headers_add (struct http_headers *headers,
   header->key = obstack_copy0 (&headers->data, key, header->key_len);
   header->value = obstack_copy0 (&headers->data, value, strlen (value));
 
-  header->next = headers->head;
-  headers->head = header;
+  header->next = NULL;
+
+  *headers->tailp = header;
+  headers->tailp = &header->next;
 }
 
 struct http_headers *
@@ -43,6 +45,8 @@ http_headers_new (const char *headers)
   struct http_headers *h = calloc (sizeof (*h), 1);
 
   obstack_init (&h->data);
+
+  h->tailp = &h->head;
 
   if (headers)
     {
@@ -82,10 +86,12 @@ http_headers_new (const char *headers)
 
 	  header->value = obstack_copy0 (&h->data, value, len);
 
-	  log ("Found %s: %s", header->key, header->value);
+	  log ("Adding %s: %s", header->key, header->value);
 
-	  header->next = h->head;
-	  h->head = header;
+	  /* Link it in.  */
+	  header->next = NULL;
+	  *h->tailp = header;
+	  h->tailp = &header->next;
 	}
     }
 

@@ -35,6 +35,8 @@ struct http_header
 struct http_headers
 {
   struct http_header *head;
+  /* The last element.  */
+  struct http_header **tailp;
   struct obstack data;
 };
 
