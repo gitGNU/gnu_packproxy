@@ -186,6 +186,21 @@ user_conn_input (int fd, short event, void *arg)
 	  continue;
 	}
 
+      char *version = url_end + 1;
+      while (*version == ' ')
+	version ++;
+
+      enum http_version client_version;
+      if (strncmp (version, "HTTP/1.1", 8) == 0)
+	client_version = HTTP_11;
+      else if (strncmp (version, "HTTP/1.0", 8) == 0)
+	client_version = HTTP_10;
+      else
+	{
+	  log ("Request (%s): unknown http version.", command);
+	  continue;
+	}
+
       char *request_end = strchr (url, '\n');
       if (! request_end)
 	{
@@ -250,11 +265,24 @@ user_conn_input (int fd, short event, void *arg)
 	    log ("Forwarding: %s: %s", h->key, h->value);
 	  }
 
+      if (client_version == HTTP_10)
+	{
+	  const char *connection
+	    = http_headers_find (client_headers, "Connection");
+	  const char *keep_alive
+	    = http_headers_find (client_headers, "Keep-Alive");
+	  if (connection && strcmp (connection, "Keep-Alive") == 0
+	      && keep_alive)
+	    /* We can use a persistent connection.  */;
+	  else
+	    conn->closed = true;
+	}
+
       *url_end = 0;
       struct http_request *request
 	= http_request_new (conn, http_conn,
 			    url, HTTP_GET, request_headers, NULL,
-			    HTTP_11, client_headers);
+			    client_version, client_headers);
       if (! request)
 	{
 	  log ("Failed to create http request.");
@@ -476,8 +504,9 @@ http_request_processed_cb (struct http_request *request)
   struct http_response *response = http_response_new (user_conn, request);
   struct evbuffer *message = response->buffer;
 
-  log ("%s: response code line: `%s'",
+  log ("%s: response code %d: %s",
        request->url,
+       request->evhttp_request->response_code,
        request->evhttp_request->response_code_line);
 
   evbuffer_add_printf (message,
@@ -531,8 +560,7 @@ http_request_processed_cb (struct http_request *request)
   if (user_conn->closed)
     /* The user closed the connection.  Signal that this is the last
        transfer.  */
-    evbuffer_add_printf (message, "Connection: close\r\n",
-			 header->key, header->value);
+    evbuffer_add_printf (message, "Connection: close\r\n");
 
   bool connection_closed = false;
   if (connection && strcmp (connection, "close") == 0)
