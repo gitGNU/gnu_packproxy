@@ -1201,6 +1201,17 @@ evhttp_parse_lines(struct evhttp_request *req, struct evbuffer* buffer)
 	int done = 0;
 
 	struct evkeyvalq* headers = req->input_headers;
+
+	/* Some http servers gratuitiously send extra \r\n's when
+	   pipelining.  */
+	while (EVBUFFER_LENGTH (buffer) > 2
+	       && EVBUFFER_DATA (buffer)[0] == '\r'
+	       && EVBUFFER_DATA (buffer)[1] == '\n')
+	  {
+	    log (BOLD ("Server sent gratuitous \\r\\n!"));
+	    evbuffer_drain (buffer, 2);
+	  }
+
 	while ((endp = evbuffer_find(buffer, (u_char *)"\r\n", 2)) != NULL) {
 		char *skey, *svalue;
 
