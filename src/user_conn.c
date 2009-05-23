@@ -259,11 +259,16 @@ user_conn_input (int fd, short event, void *arg)
 		 && strcmp (h->key, "Transfer-Encoding") != 0
 		 && strcmp (h->key, "Upgrade") != 0
 
-		 && strcmp (h->key, "Range") != 0)
+		 && strcmp (h->key, "Accept-Encoding") != 0
+		 && strcmp (h->key, "Range") != 0
+		 && strcmp (h->key, "Proxy-Connection") != 0
+		 && strcmp (h->key, "Proxy-Authorization") != 0)
 	  {
 	    http_headers_add (request_headers, h->key, h->value);
 	    log ("Forwarding: %s: %s", h->key, h->value);
 	  }
+	else
+	  log ("Not forwarding: %s: %s", h->key, h->value);
 
       if (client_version == HTTP_10)
 	{
@@ -545,16 +550,19 @@ http_request_processed_cb (struct http_request *request)
       if (strcasecmp (header->key, "transfer-encoding") == 0)
 	/* Skip.  */
 	{
+	  log ("Ignoring %s: %s", header->key, header->value);
 	  transfer_encoding = header->value;
 	  continue;
 	}
       else if (strcasecmp (header->key, "content-length") == 0)
 	{
+	  log ("Ignoring %s: %s", header->key, header->value);
 	  content_length = header->value;
 	  continue;
 	}
       else if (strcasecmp (header->key, "connection") == 0)
 	{
+	  log ("Ignoring %s: %s", header->key, header->value);
 	  connection = header->value;
 	  continue;
 	}
@@ -564,9 +572,12 @@ http_request_processed_cb (struct http_request *request)
 	content_type = header->value;
 
       /* Don't both sending these headers...  */
-      else if (strcasecmp (header->key, "Server") == 0)
-	continue;
-
+      else if (strcasecmp (header->key, "Server") == 0
+	       || strcasecmp (header->key, "X-Powered-By") == 0)
+	{
+	  log ("Ignoring %s: %s", header->key, header->value);
+	  continue;
+	}
 
       log ("Forwarding: %s: %s", header->key, header->value);
 
