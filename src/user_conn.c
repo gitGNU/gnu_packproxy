@@ -1,4 +1,4 @@
-/* user_conn.c
+/* user_conn.c - User connection management.
    Copyright (C) 2009 Neal H. Walfield <neal@gnu.org>.
 
    This program is free software; you can redistribute it and/or modify
@@ -24,6 +24,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #include "user_conn.h"
 #include "http_conn.h"
@@ -312,6 +313,85 @@ user_conn_input (int fd, short event, void *arg)
 static void user_conn_output_buffer_drained (struct bufferevent *output,
 					     void *arg);
 
+static struct user_conn_list user_conns;
+
+void
+user_conns_dump (void)
+{
+  struct user_conn *user_conn;
+  for (user_conn = user_conn_list_head (&user_conns);
+       user_conn;
+       user_conn = user_conn_list_next (user_conn))
+    {
+      printf ("User conn:\n"
+	      " origin: %s\n"
+	      " sending: %d\n"
+	      " buffered input: %d bytes\n"
+	      " request count: %d\n",
+	      user_conn->ip,
+	      user_conn->sending,
+	      user_conn->len,
+	      user_conn->request_count);
+      if (user_conn->closed)
+	printf (BOLD ("  pending close") "\n");
+
+      struct http_conn *http_conn;
+      for (http_conn = user_conn_http_conn_list_head (&user_conn->http_conns);
+	   http_conn;
+	   http_conn = user_conn_http_conn_list_next (http_conn))
+	printf (" connection to %s\n"
+		"  request count: %d\n"
+		"  pending close: %d\n",
+		http_conn->host, http_conn->request_count,
+		http_conn->close);
+
+      struct http_message *message;
+      for (message = user_conn_http_message_list_head (&user_conn->messages);
+	   message;
+	   message = user_conn_http_message_list_next (message))
+	{
+	  struct evbuffer *buffer = NULL;
+	  switch (message->type)
+	    {
+	    case HTTP_REQUEST:
+	      {
+		struct http_request *request
+		  = (struct http_request *) message;
+		printf (" request: %s\n",
+			request->url);
+		buffer = request->evhttp_request->input_buffer;
+
+		break;
+	      }
+	    case HTTP_RESPONSE:
+	      {
+		struct http_response *response
+		  = (struct http_response *) message;
+		printf (" response: %s\n"
+			"  ready: %d\n",
+			response->origin,
+			response->ready_to_go);
+		buffer = response->buffer;
+		break;
+	      }
+	    default:
+	      printf ("Unknown message type: %d", message->type);
+	      abort ();
+	    }
+
+	  printf ("  data (%d): ", EVBUFFER_LENGTH (buffer));
+	  char data[80];
+	  int i;
+	  for (i = 0; i < sizeof (data) && i < EVBUFFER_LENGTH (buffer); i ++)
+	    printf ("%c",
+		    isprint (EVBUFFER_DATA (buffer)[i])
+		    ? EVBUFFER_DATA (buffer)[i]
+		    : '?');
+	  printf ("\n");
+	}
+    }
+}
+
 struct user_conn *
 user_conn_new (int fd, const char *ip)
 {
@@ -344,6 +424,8 @@ user_conn_new (int fd, const char *ip)
 				       user_conn);
   if (! user_conn->output)
     goto bufferevent_new_fail;
+
+  user_conn_list_enqueue (&user_conns, user_conn);
 
   return user_conn;
 
@@ -382,6 +464,8 @@ user_conn_free (struct user_conn *user_conn)
     event_del (&user_conn->input);
 
   close (user_conn->fd);
+
+  user_conn_list_unlink (&user_conns, user_conn);
 
   free (user_conn);
 }

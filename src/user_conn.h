@@ -77,8 +77,12 @@ struct user_conn
      sending all of the output, tear this connection down.  */
   bool closed;
 
+  struct list_node user_conn_node;
+
   char ip[0];
 };
+LIST_CLASS(user_conn, struct user_conn, user_conn_node, true)
+ 
 
 /* Forward.  */
 struct http_request;
