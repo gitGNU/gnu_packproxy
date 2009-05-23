@@ -130,8 +130,8 @@ user_conn_input (int fd, short event, void *arg)
       else
 	conn->start = eoc_offset + EOC_LEN;
 
-      log ("command is: `%s' (len: %d -> %d; start: %d)",
-	   command, len, conn->len, conn->start);
+      log (BOLD ("request: ") " on user conn %p: `%s' (len: %d -> %d; start: %d)",
+	   conn, command, len, conn->len, conn->start);
 
 
       /* Process the command.  */
@@ -305,6 +305,8 @@ user_conn_input (int fd, short event, void *arg)
 	  log ("Failed to create http request.");
 	  http_conn_free (http_conn);
 	}
+
+      log ("http conn: %p; request: %p", http_conn, request);
     }
   while (conn->len > 0);
 }
@@ -318,16 +320,22 @@ static struct user_conn_list user_conns;
 void
 user_conns_dump (void)
 {
+  int ucs = 0;
+  int hcs = 0;
+  int reqs = 0;
+  int resps = 0;
+
   struct user_conn *user_conn;
   for (user_conn = user_conn_list_head (&user_conns);
        user_conn;
        user_conn = user_conn_list_next (user_conn))
     {
-      printf ("User conn:\n"
+      printf ("User conn (%d: %p):\n"
 	      " origin: %s\n"
 	      " sending: %d\n"
 	      " buffered input: %d bytes\n"
 	      " request count: %d\n",
+	      ++ ucs, user_conn,
 	      user_conn->ip,
 	      user_conn->sending,
 	      user_conn->len,
@@ -339,9 +347,10 @@ user_conns_dump (void)
       for (http_conn = user_conn_http_conn_list_head (&user_conn->http_conns);
 	   http_conn;
 	   http_conn = user_conn_http_conn_list_next (http_conn))
-	printf (" connection to %s\n"
+	printf (" connection (%d: %p) to %s\n"
 		"  request count: %d\n"
 		"  pending close: %d\n",
+		++ hcs, http_conn,
 		http_conn->host, http_conn->request_count,
 		http_conn->close);
 
@@ -357,8 +366,8 @@ user_conns_dump (void)
 	      {
 		struct http_request *request
 		  = (struct http_request *) message;
-		printf (" request: %s\n",
-			request->url);
+		printf ("  request (%d: %p): %s\n",
+			++ reqs, request, request->url);
 		buffer = request->evhttp_request->input_buffer;
 
 		break;
@@ -367,9 +376,9 @@ user_conns_dump (void)
 	      {
 		struct http_response *response
 		  = (struct http_response *) message;
-		printf (" response: %s\n"
-			"  ready: %d\n",
-			response->origin,
+		printf ("  response (%d: %p): %s\n"
+			"   ready: %d\n",
+			++ resps, response, response->origin,
 			response->ready_to_go);
 		buffer = response->buffer;
 		break;
@@ -379,7 +388,7 @@ user_conns_dump (void)
 	      abort ();
 	    }
 
-	  printf ("  data (%d): ", EVBUFFER_LENGTH (buffer));
+	  printf ("   data (%d): ", EVBUFFER_LENGTH (buffer));
 	  char data[80];
 	  int i;
 	  for (i = 0; i < sizeof (data) && i < EVBUFFER_LENGTH (buffer); i ++)
@@ -440,8 +449,20 @@ user_conn_new (int fd, const char *ip)
 void
 user_conn_free (struct user_conn *user_conn)
 {
-  log ("Closing user connection from %s.  %d requests.",
-       user_conn->ip, user_conn->request_count);
+  log ("Closing user connection (%p) from %s.  %d requests.",
+       user_conn, user_conn->ip, user_conn->request_count);
+
+  {
+    /* Make sure that we don't double free.  */
+    struct user_conn *uc;
+    for (uc = user_conn_list_head (&user_conns);
+	 uc; uc = user_conn_list_next (uc))
+      if (uc == user_conn)
+	break;
+    assert (uc);
+  }
+
+  user_conn->closed = true;
 
   bufferevent_disable (user_conn->output, EV_WRITE);
   bufferevent_free (user_conn->output);
@@ -454,7 +475,7 @@ user_conn_free (struct user_conn *user_conn)
   struct http_message *message;
   while ((message = user_conn_http_message_list_head (&user_conn->messages)))
     {
-      /* We cleaned pu the http connections, which should have freed
+      /* We cleaned up the http connections, which should have freed
 	 any requests.  */
       assert (message->type == HTTP_RESPONSE);
       http_message_free (message);
@@ -498,15 +519,9 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
 
   assert (user_conn->sending);
 
+  /* See if a response is pending.  */
   struct http_message *message
     = user_conn_http_message_list_head (&user_conn->messages);
-  assert (message);
-  assert (message->type == HTTP_RESPONSE);
-  http_message_free (message);
-
-
-  /* See if a response is pending.  */
-  message = user_conn_http_message_list_head (&user_conn->messages);
   if (message && message->type == HTTP_RESPONSE
       && ((struct http_response *) message)->ready_to_go)
     /* Start copying the next response.  */
@@ -525,10 +540,6 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
       bufferevent_disable (user_conn->output, EV_WRITE);
       user_conn->sending = false;
       user_conn_deref (user_conn);
-
-      if (! message && user_conn->closed)
-	/* The user closed the connection.  */
-	user_conn_free (user_conn);
     }
 }
 
@@ -559,6 +570,9 @@ user_conn_kick (struct user_conn *user_conn)
       log ("sending %d bytes to client", EVBUFFER_LENGTH (response->buffer));
       bufferevent_write_buffer (user_conn->output, response->buffer);
       bufferevent_enable (user_conn->output, EV_WRITE);
+
+      /* bufferevent_write_buffer copies the bytes.  */
+      http_response_free (response);
     }
 }
 
@@ -657,7 +671,8 @@ http_request_processed_cb (struct http_request *request)
 
       /* Don't both sending these headers...  */
       else if (strcasecmp (header->key, "Server") == 0
-	       || strcasecmp (header->key, "X-Powered-By") == 0)
+	       || strcasecmp (header->key, "X-Powered-By") == 0
+	       || strcasecmp (header->key, "X-Cnection") == 0)
 	{
 	  log ("Ignoring %s: %s", header->key, header->value);
 	  continue;
@@ -756,10 +771,9 @@ http_request_processed_cb (struct http_request *request)
 
   evbuffer_add_buffer (message, payload);
 
+  http_request_free (request);
   if (request->http_conn->close)
     http_conn_free (request->http_conn);
-  else
-    http_request_free (request);
 
   /* Mark the response as ready to be sent.  */
   response->ready_to_go = true;

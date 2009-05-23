@@ -98,10 +98,18 @@ http_conn_free (struct http_conn *http_conn)
 
       /* The request was aborted by evhttp_connection_free.  */
       request->evhttp_request = NULL;
-      http_request_free (request);
+
+      http_response_new_error (http_conn->user_conn, request,
+			       503, "Server reset connection",
+			       false, request->url);
     }
 
   user_conn_http_conn_list_unlink (&http_conn->user_conn->http_conns,
 				   http_conn);
+
+  /* This may have caused a message that is ready to send to move to
+     the head of the queue.  */
+  user_conn_kick (http_conn->user_conn);
+
   free (http_conn);
 }

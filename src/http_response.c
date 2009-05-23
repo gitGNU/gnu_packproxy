@@ -27,7 +27,9 @@
 #include "log.h"
 
 static struct http_response *
-http_response_alloc (const char *origin)
+http_response_alloc (struct user_conn *user_conn,
+		     struct http_request *reply_to,
+		     const char *origin)
 {
   if (! origin)
     origin = "unknown";
@@ -47,6 +49,9 @@ http_response_alloc (const char *origin)
       return NULL;
     }
 
+  http_message_init (&response->message, HTTP_RESPONSE, user_conn,
+		     &reply_to->message);
+
   return response;
 }
 
@@ -56,12 +61,10 @@ http_response_new (struct user_conn *user_conn,
 		   const char *origin)
 {
   struct http_response *response
-    = http_response_alloc (origin ?: reply_to ? reply_to->url : NULL);
+    = http_response_alloc (user_conn, reply_to,
+			   origin ?: reply_to ? reply_to->url : NULL);
   if (! response)
     return NULL;
-
-  http_message_init (&response->message, HTTP_RESPONSE, user_conn,
-		     &reply_to->message);
 
   return response;
 }
@@ -73,8 +76,12 @@ http_response_new_error (struct user_conn *user_conn,
 			 bool close,
 			 const char *origin)
 {
+  if (user_conn->closed)
+    return NULL;
+
   struct http_response *response
-    = http_response_alloc (origin ?: reply_to ? reply_to->url : NULL);
+    = http_response_alloc (user_conn, reply_to,
+			   origin ?: reply_to ? reply_to->url : NULL);
   if (! response)
     return NULL;
 
@@ -83,7 +90,7 @@ http_response_new_error (struct user_conn *user_conn,
 
   /* The status line.  */
   evbuffer_add_printf (response->buffer,
-		       "HTTP 1.1 %d %s\r\n\r\n",
+		       "HTTP 1.1 %d %s\r\n",
 		       status_code, status_string);
 
   /* Appropriate headers.  */
@@ -94,13 +101,16 @@ http_response_new_error (struct user_conn *user_conn,
 	close = false;
       else
 	user_conn->closed = true;
+
+      evbuffer_add_printf (response->buffer, "Connection: close\r\n");
     }
 
   evbuffer_add_printf (response->buffer, "Content-Length: 0\r\n");
 
   evbuffer_add_printf (response->buffer, "\r\n");
 
-
+  if (reply_to)
+    http_request_free (reply_to);
   response->ready_to_go = true;
   user_conn_kick (user_conn);
 

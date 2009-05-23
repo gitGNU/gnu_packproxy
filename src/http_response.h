@@ -45,14 +45,17 @@ struct http_response
    REPLY_TO is not NULL, then this is in response to the message
    REPLY_TO and the new response is enqueued on USER_CONN
    appropriately.  Otherwise, the response is appended to the end of
-   USER_CONN message queue.  */
+   USER_CONN message queue.
+
+   Unlike http_response_new_error, this function does NOT free
+   REPLY_TO.  */
 extern struct http_response *http_response_new (struct user_conn *user_conn,
 						struct http_request *reply_to,
 						const char *origin);
 
 /* Create an http response consisting of an error.  The response is
    formulated, made ready and queued.  If CLOSE_CONNECTION is true,
-   also marks USER_CONN as closed.  */
+   also marks USER_CONN as closed.  Frees REPLY_TO.  */
 extern struct http_response *http_response_new_error
   (struct user_conn *user_conn,
    struct http_request *reply_to,
