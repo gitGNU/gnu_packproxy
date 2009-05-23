@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 
 #include "user_conn.h"
 #include "log.h"
@@ -66,6 +67,18 @@ static int
 pack_proxy (struct arguments_t *arguments)
 {
   int ret;
+
+  /* We block SIGPIPE.  If a client closes the socket and we write to
+     it, the write returns EPIPE and delivers a SIGPIPE.  The default
+     action is to abort.  This is not what we want.  Blocking SIGPIPE
+     is enough as the right thing will happen: the write will fail and
+     we will notice that the socket has been closed.  */
+  sigset_t sigset;
+  sigemptyset (&sigset);
+  sigaddset (&sigset, SIGPIPE);
+  ret = sigprocmask (SIG_BLOCK, &sigset, NULL);
+  if (ret < 0)
+    error (errno, 1, "sigprocmask (SIG_BLOCK, SIGPIPE)");
 
   event_base = event_init ();
   if (! event_base)
