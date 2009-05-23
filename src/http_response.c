@@ -76,9 +76,6 @@ http_response_new_error (struct user_conn *user_conn,
 			 bool close,
 			 const char *origin)
 {
-  if (user_conn->closed)
-    return NULL;
-
   struct http_response *response
     = http_response_alloc (user_conn, reply_to,
 			   origin ?: reply_to ? reply_to->url : NULL);
@@ -96,12 +93,7 @@ http_response_new_error (struct user_conn *user_conn,
   /* Appropriate headers.  */
   if (close)
     {
-      if (user_conn->closed)
-	/* Already closed... */
-	close = false;
-      else
-	user_conn->closed = true;
-
+      bufferevent_disable (user_conn->event_source, EV_READ);
       evbuffer_add_printf (response->buffer, "Connection: close\r\n");
     }
 
@@ -113,11 +105,6 @@ http_response_new_error (struct user_conn *user_conn,
     http_request_free (reply_to);
   response->ready_to_go = true;
   user_conn_kick (user_conn);
-
-  if (close)
-    /* We do this after calling user_conn_kick.  Otherwise, we would
-       deallocate USER_CONN before we sent the response.  */
-    user_conn_deref (user_conn);
 
   return response;
 }

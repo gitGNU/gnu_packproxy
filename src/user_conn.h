@@ -31,22 +31,7 @@ struct user_conn
   /* The file descriptor which is connected to the user.  */
   int fd;
 
-
-  /* The output side of the processing.  */
-  bool sending;
-  struct bufferevent *output;
-
-
-  /* The input side of the processing.  */
-  struct event input;
-
-  /* The command buffer.  */
-#define USER_CONN_BUFFER_SIZE 4096
-  char buffer[USER_CONN_BUFFER_SIZE];
-  /* Offset of the start of buffer.  */
-  int start;
-  /* Length of buffer.  */
-  int len;
+  struct bufferevent *event_source;
 
 
   /* List of http connections owned by this user connection.  */
@@ -58,7 +43,8 @@ struct user_conn
      was received.  */
   struct user_conn_http_message_list messages;
 
-  int refs;
+  /* If being freed.  */
+  bool dead;
 
   /* Number of requests handled by this connection.  */
   int request_count;
@@ -72,10 +58,6 @@ struct user_conn
   int server_in_bytes;
   /* Number of bytes sent to web servers.  */
   int server_out_bytes;
-
-  /* Whether the user closed the connection.  In which case, after
-     sending all of the output, tear this connection down.  */
-  bool closed;
 
   struct list_node user_conn_node;
 
@@ -94,12 +76,6 @@ extern struct user_conn *user_conn_new (int fd, const char *from);
 /* Release the resources associated with USER_CONN.  This closes any
    http connections and aborts any transfers.  */
 extern void user_conn_free (struct user_conn *user_conn);
-
-#define user_conn_ref(_uc) user_conn_ref_(_uc, __FUNCTION__)
-extern void user_conn_ref_ (struct user_conn *user_conn, const char *caller);
-
-#define user_conn_deref(_uc) user_conn_deref_(_uc, __FUNCTION__)
-extern void user_conn_deref_ (struct user_conn *user_conn, const char *caller);
 
 /* Should be called after enqueuing a ready response.  */
 extern void user_conn_kick (struct user_conn *user_conn);

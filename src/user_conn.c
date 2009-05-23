@@ -35,108 +35,103 @@
 #include "gzip.h"
 #include "jpeg.h"
 
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
+static void
+user_conn_error (struct bufferevent *source, short what, void *arg)
+{
+  struct user_conn *conn = arg;
+  assert (! conn->dead);
+  assert (source == conn->event_source);
+
+  switch (what)
+    {
+    case EVBUFFER_READ:
+      log ("read");
+      break;
+    case EVBUFFER_WRITE:
+      log ("write");
+      break;
+    case EVBUFFER_EOF:
+      log ("eof");
+      break;
+    case EVBUFFER_ERROR:
+      log ("error");
+      break;
+    case EVBUFFER_TIMEOUT:
+      log ("timeout");
+      break;
+    default:
+      log ("unknown");
+      break;
+    }
+}
 
 /* Event handler for data on active connections.  */
 static void
-user_conn_input (int fd, short event, void *arg)
+user_conn_input_available (struct bufferevent *source, void *arg)
 {
   struct user_conn *conn = arg;
-  assert (fd == conn->fd);
+  assert (! conn->dead);
+  assert (source == conn->event_source);
 
-  /* Append to the command buffer.  */
+#define DEFAULT_ERROR 501
+#define DEFAULT_ERROR_STRING "Unsupported method."
 
-  /* The next free slot.  */
-  int next = conn->start + conn->len;
-  assert (next <= USER_CONN_BUFFER_SIZE);
-  /* The number of bytes available.  */
-  int space = USER_CONN_BUFFER_SIZE - next;
-  if (space == 0)
-    /* No space.  */
+  int do_drain = 0;
+  int send_error = 0;
+  const char *send_error_string = NULL;
+  while (1)
     {
-      if (next > 0)
-	/* There is space at the beginning of the buffer.  Move the
-	   existing data.  */
-	{
-	  memmove (&conn->buffer[0], &conn->buffer[next], conn->len);
-	  next = conn->len;
-	  space = USER_CONN_BUFFER_SIZE - next;
-	}
-      else
-	/* XXX: There is really no space left.  What to do...  */
-	{
-	  abort ();
-	}
-    }
+      /* Send any pending error.  */
+      if (send_error)
+	http_response_new_error (conn, NULL, send_error, send_error_string,
+				 true, NULL);
+      /* Drain the last read input.  */
+      evbuffer_drain (source->input, do_drain);
 
-  ssize_t s = read (fd, &conn->buffer[next], space);
-  if (s < 0)
-    {
-      log ("read(): %m");
-      s = 0;
-    }
-  log ("Got %d bytes", s);
-  conn->client_in_bytes += s;
+      send_error = DEFAULT_ERROR;
+      send_error_string = DEFAULT_ERROR_STRING;
 
-  conn->len += s;
 
-  if (s == 0)
-    /* End of input.  Note: this does not mean that we can free CONN:
-       we may still be sending data to the client.  */
-    {
-      user_conn_deref (conn);
-      return;
-    }
+      /* See if we have a pending command.  */
+      char *command = (char *) EVBUFFER_DATA (source->input);
 
-  /* A command ends with the following string.  */
+      /* A command ends with the following string.  */
 #define EOC "\r\n\r\n"
 #define EOC_LEN (sizeof (EOC) - 1)
-
-  /* We don't want to search the whole buffer.  We already know that
-     the end of command string is not present.  We cannot only search
-     the newly received data as the end of command could straddle the
-     new data.  At most, EOC_LEN - 1 bytes could be in the former
-     buffer (otherwise, we would have processed the command last
-     time!).  Adjust NEXT appropriately and set SEARCH_SPACE to the
-     number of bytes to search.  */
-  next = MAX (conn->start, next - EOC_LEN - 1);
-  int search_space = conn->len - (next - conn->start);
-
-  do
-    {
-      char *eoc = memmem (&conn->buffer[next], search_space, EOC, EOC_LEN);
+      char *eoc = memmem (command, EVBUFFER_LENGTH (source->input),
+			  EOC, EOC_LEN);
       if (! eoc)
 	/* No end of command => no command ready to process.  */
 	break;
 
+      /* We got a whole command.  */
+
       conn->request_count ++;
 
-      /* We got a whole command.  NUL terminate it by replacing the
-	 first terminating character with a \0.  */
+      int eoc_offset = (intptr_t) eoc - (intptr_t) command;
+      do_drain = eoc_offset + EOC_LEN;
+
+      /* NUL terminate the command by replacing the first terminating
+	 character with a \0.  */
       *eoc = 0;
-      int eoc_offset = (intptr_t) eoc - (intptr_t) conn->buffer;
 
-      char *command = &conn->buffer[conn->start];
-
-      int len = conn->len;
-
-      /* Adjust the start and length appropriately.  */
-      conn->len -= (eoc_offset + EOC_LEN) - conn->start;
-
-      if (conn->len == 0)
-	/* There is nothing that we would have to copy.  Reset
-	   CONN->START to 0.*/
-	conn->start = 0;
-      else
-	conn->start = eoc_offset + EOC_LEN;
-
-      log (BOLD ("request: ") " on user conn %p: `%s' (len: %d -> %d; start: %d)",
-	   conn, command, len, conn->len, conn->start);
-
+      log (BOLD ("request: ") " on user conn %p: `%s'",
+	   conn, command);
 
       /* Process the command.  */
 
-      /* Extract the request.  */
+      /* Some clients gratuitous \r\n or \n's at the end of a command.
+	 Don't be confused.  */
+      while (strncmp (command, "\r\n", 2) == 0)
+	command += 2;
+      while (*command == '\n')
+	command ++;
+
+      /* Extract the method.  */
+
+      /* Ignore any leading white space.  */
+      while (*command == ' ')
+	command ++;
       const char *verb = command;
       const char *verb_end = strchr (command, ' ');
       if (! verb_end)
@@ -154,7 +149,7 @@ user_conn_input (int fd, short event, void *arg)
       char *url_end = strchr (url, ' ');
       if (! url_end)
 	{
-	  log ("Request (%s) contains an invalid GET!", command);
+	  log ("Request (%s) lacks a URL!", command);
 	  continue;
 	}
 
@@ -178,11 +173,6 @@ user_conn_input (int fd, short event, void *arg)
       else
 	{
 	  log ("Request (%s) does not include supported verb!", command);
-
-	  *url_end = 0;
-	  http_response_new_error (conn, NULL, 501, "Unsupported method.",
-				   true, url);
-
 	  continue;
 	}
 
@@ -208,6 +198,7 @@ user_conn_input (int fd, short event, void *arg)
 	  continue;
 	}
 
+      /* Parse the headers.  */
       char *headers = request_end + 1;
       struct http_headers *client_headers = http_headers_new (headers);
 
@@ -239,7 +230,7 @@ user_conn_input (int fd, short event, void *arg)
 	    }
 	}
 
-      /* Issue the request.  */
+      /* Forward the request.  */
       
       /* Add the appropriate headers.  */
       struct http_headers *request_headers = http_headers_new (NULL);
@@ -251,7 +242,7 @@ user_conn_input (int fd, short event, void *arg)
 	if (strcmp (h->key, "Connection") == 0)
 	  {
 	    if (strcmp (h->value, "close") == 0)
-	      conn->closed = true;
+	      bufferevent_disable (conn->event_source, EV_READ);
 	  }
 	else if (strcmp (h->key, "Keep-Alive") != 0
 		 && strcmp (h->key, "Public") != 0
@@ -270,21 +261,31 @@ user_conn_input (int fd, short event, void *arg)
 	else
 	  log ("Not forwarding: %s: %s", h->key, h->value);
 
+      const char *connection
+	= http_headers_find (client_headers, "Connection");
       if (client_version == HTTP_10)
+	/* HTTP 1.0 connections are not persistent by default.  */
 	{
-	  const char *connection
-	    = http_headers_find (client_headers, "Connection");
 	  const char *keep_alive
 	    = http_headers_find (client_headers, "Keep-Alive");
 	  if (connection && strcmp (connection, "Keep-Alive") == 0
 	      && keep_alive)
 	    /* We can use a persistent connection.  */;
 	  else
-	    conn->closed = true;
+	    bufferevent_disable (conn->event_source, EV_READ);
+	}
+      else
+	/* HTTP 1.1 connections are persistent by default.  See if the
+	   client overrode it.  */
+	{
+	  if (connection && strcmp (connection, "close") == 0)
+	    bufferevent_disable (conn->event_source, EV_READ);
 	}
 
+      /* We can't send an absolute URI to an HTTP 1.0 server.
+	 However, 1.1 servers will accept Host + resource.  Do that by
+	 default.  */
       *url_end = 0;
-
       const char *resource = url;
       if (strncasecmp (url, "http://", 7) == 0
 	  && strncasecmp (url + 7, host, strlen (host)) == 0)
@@ -307,8 +308,9 @@ user_conn_input (int fd, short event, void *arg)
 	}
 
       log ("http conn: %p; request: %p", http_conn, request);
+
+      send_error = 0;
     }
-  while (conn->len > 0);
 }
 
 /* Forward.  */
@@ -332,15 +334,13 @@ user_conns_dump (void)
     {
       printf ("User conn (%d: %p):\n"
 	      " origin: %s\n"
-	      " sending: %d\n"
 	      " buffered input: %d bytes\n"
 	      " request count: %d\n",
 	      ++ ucs, user_conn,
 	      user_conn->ip,
-	      user_conn->sending,
-	      user_conn->len,
+	      EVBUFFER_LENGTH (user_conn->event_source->input),
 	      user_conn->request_count);
-      if (user_conn->closed)
+      if (! (user_conn->event_source->enabled & EV_READ))
 	printf (BOLD ("  pending close") "\n");
 
       struct http_conn *http_conn;
@@ -416,33 +416,27 @@ user_conn_new (int fd, const char *ip)
   memcpy (user_conn->ip, ip, ip_len);
 
   user_conn->fd = fd;
-  user_conn->refs = 1;
 
-  event_set (&user_conn->input, fd, EV_READ|EV_PERSIST,
-	     user_conn_input, user_conn);
-
-  int ret = event_add (&user_conn->input, NULL /* No timeout.  */);
-  if (ret < 0)
-    goto event_add_fail;
-
-
-  user_conn->output = bufferevent_new (user_conn->fd,
-				       NULL,
-				       user_conn_output_buffer_drained,
-				       NULL,
-				       user_conn);
-  if (! user_conn->output)
+  user_conn->event_source
+    = bufferevent_new (user_conn->fd,
+		       user_conn_input_available,
+		       user_conn_output_buffer_drained,
+		       user_conn_error,
+		       user_conn);
+  if (! user_conn->event_source)
     goto bufferevent_new_fail;
+
+  /* Reading is disabled by default and writing is enabled.  */
+  bufferevent_enable (user_conn->event_source, EV_READ);
+  bufferevent_disable (user_conn->event_source, EV_WRITE);
 
   user_conn_list_enqueue (&user_conns, user_conn);
 
   return user_conn;
 
  bufferevent_new_fail:
-  event_del (&user_conn->input);
- event_add_fail:
   free (user_conn);
- user_conn_alloc_fail:  
+ user_conn_alloc_fail:
   return NULL;
 }
 
@@ -451,6 +445,9 @@ user_conn_free (struct user_conn *user_conn)
 {
   log ("Closing user connection (%p) from %s.  %d requests.",
        user_conn, user_conn->ip, user_conn->request_count);
+
+  assert (! user_conn->dead);
+  user_conn->dead = true;
 
   {
     /* Make sure that we don't double free.  */
@@ -462,10 +459,7 @@ user_conn_free (struct user_conn *user_conn)
     assert (uc);
   }
 
-  user_conn->closed = true;
-
-  bufferevent_disable (user_conn->output, EV_WRITE);
-  bufferevent_free (user_conn->output);
+  bufferevent_free (user_conn->event_source);
 
   /* Close any extant connections.  */
   struct http_conn *http_conn;
@@ -481,9 +475,6 @@ user_conn_free (struct user_conn *user_conn)
       http_message_free (message);
     }
 
-  if (&user_conn->start >= 0)
-    event_del (&user_conn->input);
-
   close (user_conn->fd);
 
   user_conn_list_unlink (&user_conns, user_conn);
@@ -491,33 +482,13 @@ user_conn_free (struct user_conn *user_conn)
   free (user_conn);
 }
 
-void
-user_conn_ref_ (struct user_conn *user_conn, const char *caller)
-{
-  log ("%s bumping ref for %p to %d", caller, user_conn, user_conn->refs + 1);
-
-  assert (user_conn->refs > 0);
-  user_conn->refs ++;
-}
-
-void
-user_conn_deref_ (struct user_conn *user_conn, const char *caller)
-{
-  log ("%s downing ref for %p to %d", caller, user_conn, user_conn->refs - 1);
-
-  assert (user_conn->refs > 0);
-  user_conn->refs --;
-  if (user_conn->refs == 0)
-    user_conn_free (user_conn);
-}
-
-
 static void
 user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
 {
   struct user_conn *user_conn = arg;
 
-  assert (user_conn->sending);
+  assert (! user_conn->dead);
+  assert ((output->enabled & EV_WRITE));
 
   /* See if a response is pending.  */
   struct http_message *message
@@ -532,29 +503,51 @@ user_conn_output_buffer_drained (struct bufferevent *output, void *arg)
       log ("sending %d bytes to client", len);
       user_conn->client_out_bytes += len;
 
-      bufferevent_write_buffer (user_conn->output, response->buffer);
+      bufferevent_write_buffer (user_conn->event_source, response->buffer);
     }
   else
     {
       /* Disable the copying.  */
-      bufferevent_disable (user_conn->output, EV_WRITE);
-      user_conn->sending = false;
-      user_conn_deref (user_conn);
+      bufferevent_disable (user_conn->event_source, EV_WRITE);
+
+      /* If there are no pending requests or responses and the user
+	 side has been closed, destroy the connection.  */
+      if (! message
+	  && ! (user_conn->event_source->enabled & EV_READ))
+	user_conn_free (user_conn);
     }
 }
 
 void
 user_conn_kick (struct user_conn *user_conn)
 {
-  if (user_conn->sending)
-    /* Already sending.  */
+  /* When calling user_free, it frees any pending connections, which
+     may generate error responses, which call this function.  This
+     breaks the infernal loop.  */
+  if (user_conn->dead)
     return;
+
+  if ((user_conn->event_source->enabled & EV_WRITE))
+    /* Already sending.  */
+    {
+      log ("%p already sending (%x)",
+	   user_conn, user_conn->event_source->enabled);
+      return;
+    }
 
   struct http_message *message
     = user_conn_http_message_list_head (&user_conn->messages);
   if (! message)
     /* Nothing waiting.  */
-    return;
+    {
+      if (! (user_conn->event_source->enabled & EV_READ))
+	{
+	  log ("%p: read disabled and nothing pending (%x)",
+	       user_conn, user_conn->event_source->enabled);
+	  user_conn_free (user_conn);
+	}
+      return;
+    }
   if (message->type != HTTP_RESPONSE)
     /* Not a response.  */
     return;
@@ -563,13 +556,10 @@ user_conn_kick (struct user_conn *user_conn)
   if (response->ready_to_go)
     /* The response is finished.  Queue it up.  */
     {
-      user_conn_ref (user_conn);
-      user_conn->sending = true;
-
       user_conn->client_out_bytes += EVBUFFER_LENGTH (response->buffer);
       log ("sending %d bytes to client", EVBUFFER_LENGTH (response->buffer));
-      bufferevent_write_buffer (user_conn->output, response->buffer);
-      bufferevent_enable (user_conn->output, EV_WRITE);
+      bufferevent_write_buffer (user_conn->event_source, response->buffer);
+      bufferevent_enable (user_conn->event_source, EV_WRITE);
 
       /* bufferevent_write_buffer copies the bytes.  */
       http_response_free (response);
@@ -684,7 +674,7 @@ http_request_processed_cb (struct http_request *request)
 			   header->key, header->value);
     }
 
-  if (user_conn->closed)
+  if (! (user_conn->event_source->enabled & EV_READ))
     /* The user closed the connection.  Signal that this is the last
        transfer.  */
     evbuffer_add_printf (message, "Connection: close\r\n");
@@ -771,9 +761,10 @@ http_request_processed_cb (struct http_request *request)
 
   evbuffer_add_buffer (message, payload);
 
+  struct http_conn *http_conn = request->http_conn;
   http_request_free (request);
-  if (request->http_conn->close)
-    http_conn_free (request->http_conn);
+  if (http_conn->close)
+    http_conn_free (http_conn);
 
   /* Mark the response as ready to be sent.  */
   response->ready_to_go = true;
