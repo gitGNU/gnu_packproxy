@@ -37,6 +37,8 @@ struct http_response
 
   /* The response.  */
   struct evbuffer *buffer;
+
+  char origin[0];
 };
 
 /* Create an http response.  The response is initially empty.  If
@@ -45,7 +47,8 @@ struct http_response
    appropriately.  Otherwise, the response is appended to the end of
    USER_CONN message queue.  */
 extern struct http_response *http_response_new (struct user_conn *user_conn,
-						struct http_request *reply_to);
+						struct http_request *reply_to,
+						const char *origin);
 
 /* Create an http response consisting of an error.  The response is
    formulated, made ready and queued.  If CLOSE_CONNECTION is true,
@@ -54,7 +57,8 @@ extern struct http_response *http_response_new_error
   (struct user_conn *user_conn,
    struct http_request *reply_to,
    int status_code, const char *status_string,
-   bool close_connection);
+   bool close_connection,
+   const char *origin);
 
 /* Free the response unlinking it from its associated USER_CONN.  */
 extern void http_response_free (struct http_response *response);

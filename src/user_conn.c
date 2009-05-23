@@ -146,6 +146,17 @@ user_conn_input (int fd, short event, void *arg)
 
       int verb_len = (intptr_t) verb_end - (intptr_t) verb;
 
+      const char *url = verb_end + 1;
+      while (*url == ' ')
+	url ++;
+
+      char *url_end = strchr (url, ' ');
+      if (! url_end)
+	{
+	  log ("Request (%s) contains an invalid GET!", command);
+	  continue;
+	}
+
       enum http_method method = -1;
       if (verb_len == 3 && memcmp (verb, "GET", 3) == 0)
 	method = HTTP_GET;
@@ -166,19 +177,11 @@ user_conn_input (int fd, short event, void *arg)
       else
 	{
 	  log ("Request (%s) does not include supported verb!", command);
+
+	  *url_end = 0;
 	  http_response_new_error (conn, NULL, 501, "Unsupported method.",
-				   true);
-	  continue;
-	}
+				   true, url);
 
-      const char *url = verb_end + 1;
-      while (*url == ' ')
-	url ++;
-
-      char *url_end = strchr (url, ' ');
-      if (! url_end)
-	{
-	  log ("Request (%s) contains an invalid GET!", command);
 	  continue;
 	}
 
@@ -517,7 +520,8 @@ http_request_processed_cb (struct http_request *request)
 
   struct evbuffer *payload = request->evhttp_request->input_buffer;
 
-  struct http_response *response = http_response_new (user_conn, request);
+  struct http_response *response = http_response_new (user_conn, request,
+						      request->url);
   struct evbuffer *message = response->buffer;
 
   log ("%s -> %d: %s (HTTP/%d.%d)",

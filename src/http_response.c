@@ -26,36 +26,55 @@
 #include "user_conn.h"
 #include "log.h"
 
-struct http_response *
-http_response_new (struct user_conn *user_conn,
-		   struct http_request *reply_to)
+static struct http_response *
+http_response_alloc (const char *origin)
 {
-  struct http_response *response = calloc (sizeof (*response), 1);
+  if (! origin)
+    origin = "unknown";
+
+  int origin_len = strlen (origin);
+  struct http_response *response
+    = calloc (sizeof (*response) + origin_len + 1, 1);
   if (! response)
-    goto err;
+    return NULL;
+
+  memcpy (response->origin, origin, origin_len);
 
   response->buffer = evbuffer_new ();
   if (! response->buffer)
-    goto err_with_mem;
+    {
+      free (response);
+      return NULL;
+    }
+
+  return response;
+}
+
+struct http_response *
+http_response_new (struct user_conn *user_conn,
+		   struct http_request *reply_to,
+		   const char *origin)
+{
+  struct http_response *response
+    = http_response_alloc (origin ?: reply_to ? reply_to->url : NULL);
+  if (! response)
+    return NULL;
 
   http_message_init (&response->message, HTTP_RESPONSE, user_conn,
 		     &reply_to->message);
 
   return response;
-
- err_with_mem:
-  free (response);
- err:
-  return NULL;
 }
 
 struct http_response *
 http_response_new_error (struct user_conn *user_conn,
 			 struct http_request *reply_to,
 			 int status_code, const char *status_string,
-			 bool close)
+			 bool close,
+			 const char *origin)
 {
-  struct http_response *response = http_response_new (user_conn, reply_to);
+  struct http_response *response
+    = http_response_alloc (origin ?: reply_to ? reply_to->url : NULL);
   if (! response)
     return NULL;
 
@@ -70,8 +89,11 @@ http_response_new_error (struct user_conn *user_conn,
   /* Appropriate headers.  */
   if (close)
     {
-      user_conn->closed = true;
-      evbuffer_add_printf (response->buffer, "Connection: close\r\n");
+      if (user_conn->closed)
+	/* Already closed... */
+	close = false;
+      else
+	user_conn->closed = true;
     }
 
   evbuffer_add_printf (response->buffer, "Content-Length: 0\r\n");
@@ -82,12 +104,19 @@ http_response_new_error (struct user_conn *user_conn,
   response->ready_to_go = true;
   user_conn_kick (user_conn);
 
+  if (close)
+    /* We do this after calling user_conn_kick.  Otherwise, we would
+       deallocate USER_CONN before we sent the response.  */
+    user_conn_deref (user_conn);
+
   return response;
 }
 
 void
 http_response_free (struct http_response *response)
 {
+  log ("Destroying response %s", response->origin);
+
   http_message_destroy (&response->message);
   
   evbuffer_free (response->buffer);

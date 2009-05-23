@@ -41,7 +41,8 @@ http_request_complete (struct evhttp_request *evrequest, void *arg)
       http_response_new_error (request->http_conn->user_conn,
 			       request,
 			       502, "Bad origin server response.",
-			       false);
+			       false,
+			       request->url);
 
       http_conn_free (request->http_conn);
       
