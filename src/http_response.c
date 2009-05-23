@@ -24,6 +24,7 @@
 #include "http_response.h"
 #include "http_request.h"
 #include "user_conn.h"
+#include "log.h"
 
 struct http_response *
 http_response_new (struct user_conn *user_conn,
@@ -46,6 +47,42 @@ http_response_new (struct user_conn *user_conn,
   free (response);
  err:
   return NULL;
+}
+
+struct http_response *
+http_response_new_error (struct user_conn *user_conn,
+			 struct http_request *reply_to,
+			 int status_code, const char *status_string,
+			 bool close)
+{
+  struct http_response *response = http_response_new (user_conn, reply_to);
+  if (! response)
+    return NULL;
+
+  log ("Sending a %d %s on user conn %p",
+       status_code, status_string, user_conn);
+
+  /* The status line.  */
+  evbuffer_add_printf (response->buffer,
+		       "HTTP 1.1 %d %s\r\n\r\n",
+		       status_code, status_string);
+
+  /* Appropriate headers.  */
+  if (close)
+    {
+      user_conn->closed = true;
+      evbuffer_add_printf (response->buffer, "Connection: close\r\n");
+    }
+
+  evbuffer_add_printf (response->buffer, "Content-Length: 0\r\n");
+
+  evbuffer_add_printf (response->buffer, "\r\n");
+
+
+  response->ready_to_go = true;
+  user_conn_kick (user_conn);
+
+  return response;
 }
 
 void

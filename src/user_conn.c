@@ -166,12 +166,8 @@ user_conn_input (int fd, short event, void *arg)
       else
 	{
 	  log ("Request (%s) does not include supported verb!", command);
-	  struct http_response *response = http_response_new (conn, NULL);
-	  evbuffer_add_printf (response->buffer,
-			       "HTTP 1.1 501 Unsupported method.\r\n\r\n");
-	  response->ready_to_go = true;
-	  user_conn_kick (conn);
-	  
+	  http_response_new_error (conn, NULL, 501, "Unsupported method.",
+				   true);
 	  continue;
 	}
 

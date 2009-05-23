@@ -47,6 +47,15 @@ struct http_response
 extern struct http_response *http_response_new (struct user_conn *user_conn,
 						struct http_request *reply_to);
 
+/* Create an http response consisting of an error.  The response is
+   formulated, made ready and queued.  If CLOSE_CONNECTION is true,
+   also marks USER_CONN as closed.  */
+extern struct http_response *http_response_new_error
+  (struct user_conn *user_conn,
+   struct http_request *reply_to,
+   int status_code, const char *status_string,
+   bool close_connection);
+
 /* Free the response unlinking it from its associated USER_CONN.  */
 extern void http_response_free (struct http_response *response);
 
