@@ -362,14 +362,17 @@ user_conn_free (struct user_conn *user_conn)
 
   /* Close any extant connections.  */
   struct http_conn *http_conn;
-  struct http_conn *next
-    = user_conn_http_conn_list_head (&user_conn->http_conns);
-  while ((http_conn = next))
+  while ((http_conn = user_conn_http_conn_list_head (&user_conn->http_conns)))
+    http_conn_free (http_conn);
+
+  struct http_message *message;
+  while ((message = user_conn_http_message_list_head (&user_conn->messages)))
     {
-      next = user_conn_http_conn_list_next (http_conn);
-      http_conn_free (http_conn);
+      /* We cleaned pu the http connections, which should have freed
+	 any requests.  */
+      assert (message->type == HTTP_RESPONSE);
+      http_message_free (message);
     }
-  assert (! user_conn_http_message_list_head (&user_conn->messages));
 
   if (&user_conn->start >= 0)
     event_del (&user_conn->input);
