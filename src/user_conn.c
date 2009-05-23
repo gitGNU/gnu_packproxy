@@ -224,7 +224,7 @@ user_conn_input (int fd, short event, void *arg)
       for (http_conn = user_conn_http_conn_list_head (&conn->http_conns);
 	   http_conn;
 	   http_conn = user_conn_http_conn_list_next (http_conn))
-	if (strcmp (host, http_conn->host) == 0)
+	if (! http_conn->close && strcmp (host, http_conn->host) == 0)
 	  break;
 
       if (! http_conn)
@@ -590,9 +590,9 @@ http_request_processed_cb (struct http_request *request)
        transfer.  */
     evbuffer_add_printf (message, "Connection: close\r\n");
 
-  bool connection_closed = false;
-  if (connection && strcmp (connection, "close") == 0)
-    connection_closed = true;
+  if (! request->http_conn->close
+      && connection && strcmp (connection, "close") == 0)
+    request->http_conn->close = true;
 
   if (EVBUFFER_LENGTH (payload) > 100)
     {
@@ -672,7 +672,7 @@ http_request_processed_cb (struct http_request *request)
 
   evbuffer_add_buffer (message, payload);
 
-  if (connection_closed)
+  if (request->http_conn->close)
     http_conn_free (request->http_conn);
   else
     http_request_free (request);

@@ -40,6 +40,8 @@ struct http_conn
   /* Used by USER_CONN.  */
   struct list_node user_conn_node;
 
+  int close;
+
   /* Number of requests served.  */
   int request_count;
 
