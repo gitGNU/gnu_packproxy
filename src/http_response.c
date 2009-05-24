@@ -97,9 +97,13 @@ http_response_new_error (struct user_conn *user_conn,
       evbuffer_add_printf (response->buffer, "Connection: close\r\n");
     }
 
-  evbuffer_add_printf (response->buffer, "Content-Length: 0\r\n");
+  
+  evbuffer_add_printf (response->buffer, "Content-Length: %d\r\n",
+		       strlen (status_string));
 
   evbuffer_add_printf (response->buffer, "\r\n");
+
+  evbuffer_add_printf (response->buffer, "%s", status_string);
 
   if (reply_to)
     http_request_free (reply_to);
