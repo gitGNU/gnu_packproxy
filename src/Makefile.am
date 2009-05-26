@@ -12,6 +12,7 @@ packproxy_SOURCES = main.c \
 	http_headers.h http_headers.c \
 	gzip.h gzip.c \
 	jpeg.h jpeg.c \
+	png-support.h png-support.c \
 	list.h \
 	log.h \
 	opts.c opts.h \

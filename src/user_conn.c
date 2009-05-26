@@ -34,6 +34,7 @@
 #include "log.h"
 #include "gzip.h"
 #include "jpeg.h"
+#include "png-support.h"
 
 static void
 user_conn_error (struct bufferevent *source, short what, void *arg)
@@ -42,6 +43,7 @@ user_conn_error (struct bufferevent *source, short what, void *arg)
   assert (! conn->dead);
   assert (source == conn->event_source);
 
+  log ("event: %d", (int) what);
   switch (what)
     {
     case EVBUFFER_READ:
@@ -689,8 +691,9 @@ http_request_processed_cb (struct http_request *request)
 	  /* gzip adds a 20 byte header.  If we don't have at least 100
 	     bytes it's not worth even trying.  */
 	  && (! content_type
-	      /* Don't bother trying to compress jpeg images.  */
-	      || (strcmp (content_type, "image/jpeg") != 0)))
+	      /* Don't bother trying to compress jpeg or png images.  */
+	      && strcmp (content_type, "image/jpeg") != 0)
+	      && strcmp (content_type, "image/png") != 0)
 	/* The data is not encoded and it looks like some sort of text.
 	   gzip it!  */
 	{
@@ -723,9 +726,16 @@ http_request_processed_cb (struct http_request *request)
 	     EVBUFFER_LENGTH (payload),
 	     content_type);
 
-      if (content_type && strcmp (content_type, "image/jpeg") == 0)
+      if (content_type
+	  && (strcmp (content_type, "image/jpeg") == 0
+	      || strcmp (content_type, "image/png") == 0))
 	{
-	  struct evbuffer *result = jpeg_recompress (payload, 30);
+	  struct evbuffer *result;
+	  if (strcmp (content_type, "image/jpeg") == 0)
+	    result = jpeg_recompress (payload, 30);
+	  else
+	    result = png_recompress (payload, 30);
+
 	  if (result)
 	    {
 	      log (BOLD ("compressed (%s): %d -> %d (%d%%)"),
@@ -748,6 +758,8 @@ http_request_processed_cb (struct http_request *request)
 
 	      evbuffer_free (result);
 	    }
+	  else
+	    log ("Recompression failed");
 	}
     }
 
